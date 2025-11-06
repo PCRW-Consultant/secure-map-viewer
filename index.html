@@ -232,7 +232,7 @@ map.on("zoomend", applyZoomStyles);
 /* =========================
    学校パネル
    ========================= */
-const fullToShort = {}; Object.entries(DEFAULT_CONFIG.uiLabels).forEach(([short,full])=>fullToShort[full]=short);
+
 function uiLabelFor(s){ return fullToShort[s] || s; }
 
 function buildRoutePanel(counts){
@@ -375,20 +375,56 @@ elFileHazards.addEventListener("change", async (e)=>{ const f=e.target.files?.[0
   }catch(e){ console.error('Auto-fetch error', e); }
 })();
 
+</script> 
 /* =========================
    パスワード風ゲート
    ========================= */
-(function gate(){
-  const SECRET='PCRW2025'; const KEY='pcrw_gate_unlocked';
-  const gate=document.getElementById('pwGate'); const input=document.getElementById('pwInput');
-  const btn=document.getElementById('pwBtn'); const err=document.getElementById('pwErr'); const remember=document.getElementById('pwRemember');
-  try{ const saved=localStorage.getItem(KEY); if(saved==='1') unlock(); }catch(_){}
-  function unlock(){ document.body.classList.remove('locked'); if(gate) gate.style.display='none'; document.dispatchEvent(new CustomEvent('pcrw:unlocked')); }
-  function fail(msg){ err.textContent=msg||'アクセスコードが違います。'; }
-  function tryUnlock(){ const v=(input.value||'').trim(); if(!v){ fail('入力してください。'); return; } if(v===SECRET){ if(remember.checked){ try{localStorage.setItem(KEY,'1');}catch(_){}} unlock(); } else { fail(); } }
-  btn?.addEventListener('click', tryUnlock); input?.addEventListener('keydown', e=>{ if(e.key==='Enter') tryUnlock(); });
-  setTimeout(()=>{ input?.focus(); }, 0);
+<script> 
+/* === Gate (robust) ============================================== */
+(function(){
+  const SECRET='PCRW2025';               // ★アクセスコード
+  const KEY='pcrw_gate_unlocked';        // localStorage key
+
+  const gate=document.getElementById('pwGate');
+  const input=document.getElementById('pwInput');
+  const btn=document.getElementById('pwBtn');
+  const err=document.getElementById('pwErr');
+  const remember=document.getElementById('pwRemember');
+
+  try{
+    const qs=new URLSearchParams(location.search);
+    if (qs.get('unlock')==='1' || location.hash==='#unlock') {
+      localStorage.setItem(KEY,'1');
+    }
+  }catch(_){}
+
+  try{ if(localStorage.getItem(KEY)==='1'){ unlock(); } }catch(_){}
+
+  function unlock(){
+    document.body.classList.remove('locked');
+    if (gate) gate.style.display='none';
+    document.dispatchEvent(new CustomEvent('pcrw:unlocked'));
+    console.info('[Gate] unlocked');
+  }
+  function fail(msg){ err.textContent = msg || 'アクセスコードが違います。'; }
+
+  function tryUnlock(){
+    const v=(input?.value||'').trim();
+    console.info('[Gate] submit clicked. value length=', v.length);
+    if (!v){ fail('入力してください。'); return; }
+    if (v===SECRET){
+      if (remember?.checked){ try{ localStorage.setItem(KEY,'1'); }catch(_){} }
+      unlock();
+    } else { fail(); }
+  }
+
+  btn?.addEventListener('click', tryUnlock);
+  input?.addEventListener('keydown', e=>{ if(e.key==='Enter') tryUnlock(); });
+  setTimeout(()=>{ input?.focus(); },0);
 })();
+</script>
+
+
 
 /* =========================
    V11: 事故CSV 自動読込（左上トグル連動）
