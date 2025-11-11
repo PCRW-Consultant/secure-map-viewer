@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>V-JTEST001: 事故点GeoJSON最小モックアップ</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <style>
+        html, body, #map {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+    </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<script>
+    // 1. 地図の初期化 (Leaflet Map Initialization)
+    // グローバル変数 map を定義
+    const initialCenter = [36.56, 139.88]; // 宇都宮市付近 [lat, lon]
+    const initialZoom = 12;
+
+    const map = L.map('map').setView(initialCenter, initialZoom);
+
+    // ベースマップの追加 (淡色)
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap & CARTO',
+        maxZoom: 20
+    }).addTo(map);
+
+
+    // 2. GeoJSONファイルのロードと描画 (Accident Data Load & Draw)
+    (async function loadAccidentPoints() {
+        // GeoJSONファイルを読み込む（fetch）
+        const filename = '交通事故(2019-2024).geojson';
+        const filepath = `data/${filename}`; 
+        
+        console.log(`[TEST] Attempting to load: ${filepath}`);
+
+        let data = null;
+        try {
+            const res = await fetch(filepath, { cache: 'no-cache' });
+
+            if (!res.ok) {
+                console.error(`[TEST ERROR] Failed to fetch: Status ${res.status}`);
+                return;
+            }
+            
+            data = await res.json();
+        } catch(e) {
+            console.error('[TEST ERROR] Network or JSON Parse failure:', e);
+            return;
+        }
+
+        // 読み込み成功、描画開始
+        const accidentsLayer = L.layerGroup().addTo(map);
+        let count = 0;
+        let bounds = L.latLngBounds();
+
+        console.log(`[TEST] GeoJSON loaded successfully. Features found: ${data.features ? data.features.length : 0}`);
+
+        (data.features || []).forEach(f => {
+            // Point Feature のみ処理
+            if (f.geometry && f.geometry.type === 'Point') {
+                // GeoJSON標準 [lon, lat] から座標を取得
+                const [lon, lat] = f.geometry.coordinates || [];
+
+                // 座標が数値かつ日本域内かチェック (V216の厳密なチェックを維持)
+                if (!isFinite(lat) || !isFinite(lon) || lat < 20 || lat > 46 || lon < 122 || lon > 154) {
+                    // console.warn(`Skipped invalid coordinate: [${lon}, ${lat}]`);
+                    return;
+                }
+
+                // L.circleMarker (赤い小さな丸) を描画
+                L.circleMarker([lat, lon], {
+                    radius: 4, 
+                    color: '#c00', 
+                    fillColor: '#f55', 
+                    fillOpacity: 0.8, 
+                    weight: 1
+                }).addTo(accidentsLayer); 
+
+                bounds.extend([lat, lon]);
+                count++;
+            }
+        });
+
+        console.info(`[TEST] Drawing complete. Total points drawn: ${count}`);
+
+        // 3. 描画範囲へのズーム (Fit Bounds)
+        if (count > 0 && bounds.isValid()) {
+            map.fitBounds(bounds.pad(0.1));
+            console.log("[TEST] FitBounds successful.");
+        } else {
+            console.warn("[TEST] FitBounds skipped: No valid points found.");
+        }
+    })();
+
+</script>
+</body>
+</html>
