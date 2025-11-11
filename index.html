@@ -1,85 +1,164 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8" />
+
+  <style>
+    /* Password-gate overlay */
+    html, body { height: 100%; }
+    body.locked { overflow: hidden; }
+    #pwGate {
+      position: fixed; inset: 0; z-index: 99999;
+      background: rgba(20,20,20,0.92);
+      display: flex; align-items: center; justify-content: center;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", sans-serif;
+    }
+    #pwCard {
+      width: min(520px, 92vw);
+      background: #1f2937; color: #e5e7eb;
+      border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+      padding: 28px 24px 22px;
+    }
+    #pwCard h1 { font-size: 1.1rem; font-weight: 600; margin: 0 0 6px; color: #f9fafb; }
+    #pwCard p { font-size: 0.9rem; line-height: 1.5; color: #cbd5e1; margin: 0 0 16px; }
+    .pwRow { display:flex; gap:10px; margin-top: 10px; }
+    .pwInput {
+      flex:1; padding: 12px 14px; border-radius: 10px; border: 1px solid #374151;
+      background:#111827; color:#f9fafb; outline: none;
+    }
+    .pwBtn {
+      padding: 12px 16px; border-radius: 10px; border: 1px solid #4b5563; background:#374151; color:#fff;
+      cursor: pointer; font-weight: 600;
+    }
+    .pwBtn:hover { background:#475569; }
+    .pwErr { color:#fca5a5; font-size: 0.85rem; min-height: 1.2em; margin-top: 8px; }
+    /* Optional: blur underlay for "masked" look */
+    body.locked #appRoot, body.locked #map, body.locked .leaflet-container { filter: blur(4px) grayscale(0.2); }
+  </style>
+
   <meta name="robots" content="noindex,nofollow">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="utf-8" />
   <title>Secure web page - 通学経路・危険区間ビューアーPCRW ver10.11</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <!-- Leaflet -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-
-  <!-- CSV parser -->
-  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js" defer></script>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
 
   <style>
     html, body { height: 100%; margin: 0; }
     #app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
 
-    /* パスコード風ゲート */
-    body.locked { overflow: hidden; }
-    #pwGate { position: fixed; inset: 0; z-index: 99999; background: rgba(20,20,20,0.92);
-      display: flex; align-items: center; justify-content: center;
-      font-family: system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif; }
-    #pwCard { width: min(520px, 92vw); background:#1f2937; color:#e5e7eb; border-radius:16px;
-      box-shadow:0 10px 30px rgba(0,0,0,.4); padding:28px 24px 22px; }
-    #pwCard h1 { font-size:1.1rem; font-weight:600; margin:0 0 6px; color:#f9fafb; }
-    #pwCard p { font-size:.9rem; line-height:1.5; color:#cbd5e1; margin:0 0 16px; }
-    .pwRow { display:flex; gap:10px; margin-top:10px; }
-    .pwInput { flex:1; padding:12px 14px; border-radius:10px; border:1px solid #374151; background:#111827; color:#f9fafb; }
-    .pwBtn { padding:12px 16px; border-radius:10px; border:1px solid #4b5563; background:#374151; color:#fff; cursor:pointer; font-weight:600; }
-    .pwBtn:hover { background:#475569; }
-    .pwErr { color:#fca5a5; font-size:.85rem; min-height:1.2em; margin-top:8px; }
-    body.locked #app, body.locked #map, body.locked .leaflet-container { filter: blur(4px) grayscale(.2); }
-
-    /* ヘッダー */
-    .toolbar { display:flex; justify-content:space-between; align-items:flex-start; gap:12px;
-      padding:6px 14px; background:#44A6D7; color:#fff;
-      font-family: system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",Arial,sans-serif; }
-    .left-controls { display:flex; flex-direction:column; gap:6px; }
-    .title-row { display:flex; align-items:baseline; gap:10px; padding:3px 0; }
-    .dummy-title { font-size:1.5em; font-weight:600; }
-    .dummy-subtitle { font-size:12.5px; font-weight:600; }
-    .controls-row { display:flex; align-items:center; gap:8px; }
-    .map-toggle { display:flex; gap:6px; }
-    .map-toggle input[type="radio"] { display:none; }
-    .smallbtn { padding:3px 8px; font-size:12.5px; font-weight:600; border:1px solid rgba(255,255,255,.65);
-      border-radius:6px; background:#fff; color:#222; cursor:pointer; }
-    .smallbtn:hover { background:#f1f1f1; }
-    /* 選択中のベースマップを強調 */
-    .map-toggle input[type="radio"]:checked + label.smallbtn{
-      background:#06496a !important; color:#fff !important; border-color:rgba(255,255,255,.9) !important;
+    /* ヘッダー全体のスタイル */
+    .toolbar {
+      display: flex;
+      justify-content: space-between; /* 左右の要素を両端に配置 */
+      align-items: flex-start; /* 上揃えで配置 */
+      gap: 12px;
+      padding: 6px 14px;
+      background: #44A6D7;
+      border-bottom: 1px solid #e0e0e0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", Arial, sans-serif;
+      color: #fff;
     }
 
-    /* 右側フィルタ */
+    /* 左側コントロール（タイトル＋ボタン） */
+    .left-controls {
+      display: flex;
+      flex-direction: column; /* 上下に並べる */
+      gap: 6px;
+    }
+
+    /* 1段目：ダミーのタイトル行 */
+    .title-row {
+      display: flex;
+      align-items: baseline; /* テキストの下端を揃える */
+      gap: 10px;
+      padding: 3px 0; /* 高さをボタンと合わせるための微調整 */
+    }
+    .dummy-title {
+      font-size: 1.5em;
+      font-weight: 600;
+      color: #fff;
+    }
+    .dummy-subtitle {
+      font-size: 12.5px;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    /* 2段目：操作ボタン行 */
+    .controls-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .map-toggle {
+      display: flex;
+      gap: 6px;
+    }
+    .map-toggle input[type="radio"] { display: none; }
+    .map-toggle input[type="radio"]:checked + .smallbtn {
+      background-color: #06496a;
+      color: #fff;
+      border-color: rgba(255, 255, 255, 0.8);
+    }
+
+    .smallbtn{
+      padding:3px 8px; font-size:12.5px; font-weight:600;
+      border: 1px solid rgba(255,255,255,0.65); border-radius: 6px;
+      background: #ffffff; color:#222; cursor: pointer;
+    }
+    .smallbtn:hover { background: #f1f1f1; }
+    .btnRoute{  color:#06496a; }
+    .btnHazard{ color:#6a0606; }
+
+    /* 右側フィルター */
     .right{ display:flex; flex-direction:column; gap:6px; }
-    .row{ display:flex; align-items:center; justify-content:flex-end; gap:6px; width:100%; }
-    .caption .badgeLabel{ display:inline-block; background:#2c6c96; color:#fff; font-weight:700;
-      border:1px solid rgba(255,255,255,.75); border-radius:999px; padding:4px 10px; white-space:nowrap; }
-    .hazard-row .badgeLabel { background:#6a0606; }
+    .row{
+      display:flex; align-items:center; justify-content:flex-end;
+      gap:6px; width:100%;
+    }
+    .caption .badgeLabel{
+      display:inline-block; background:#2c6c96; color:#fff; font-weight:700;
+      border:1px solid rgba(255,255,255,0.75);
+      border-radius:999px;
+      padding:4px 10px; line-height:1; white-space:nowrap;
+    }
+    .hazard-row .caption .badgeLabel {
+      background: #6a0606;
+    }
     .chips{ display:flex; flex-wrap:wrap; gap:10px; justify-content:flex-end; }
-    .schools .group{ padding:3px 6px; background:#fff; border:1px solid #e5e5e5; border-radius:6px;
-      display:flex; align-items:center; gap:6px; color:#222; font-size:12px; white-space:nowrap; }
-    .schools .small { font-size: 12px; color:#666; }
+    .schools .group{
+      padding:3px 6px; background:#fff; border:1px solid #e5e5e5; border-radius:6px;
+      display:flex; align-items:center; gap:6px; color:#222; font-size:12px; white-space:nowrap;
+    }
+    .schools .small { font-size: 12px; color: #666; }
 
-    #map { width:100%; height:100%; }
-    .status { font-size:12px; margin-left:6px; color:#fff; }
+    #map { width: 100%; height: 100%; }
+    .status { font-size: 12px; margin-left: 6px; color: #fff; }
 
-    /* 凡例（左下固定） */
-    .legend { position:fixed; left:10px; bottom:10px; z-index:10000;
-      background:rgba(255,255,255,.98); padding:10px 12px; border-radius:6px;
-      box-shadow:0 2px 10px rgba(0,0,0,.08); font-size:13px; border:1px solid #e5e5e5; color:#222; }
-    .legend h4 { margin:0 0 6px 0; font-size:13px; }
-    .legend div { display:flex; align-items:center; margin-bottom:3px; }
-    .legend .icon { width:24px; text-align:center; }
+    .legend {
+      position: fixed; left: 10px; bottom: 10px; z-index: 10000;
+      background: rgba(255,255,255,0.98); padding: 10px 12px; border-radius: 6px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.08); font-size: 13px;
+      border: 1px solid #e5e5e5;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", Arial, sans-serif;
+      color:#222;
+    }
+    .legend h4 { margin: 0 0 6px 0; font-size: 13px; }
+    .legend div { display: flex; align-items: center; margin-bottom: 3px; }
+    .legend .icon { width: 24px; text-align: center; }
   </style>
 </head>
 <body class="locked">
-
-<!-- パスコード風ゲート -->
 <div id="pwGate" role="dialog" aria-modal="true">
   <div id="pwCard">
     <h1>Secure web page - 通学経路・危険区間ビューアーPCRW</h1>
@@ -88,7 +167,7 @@
       <input id="pwInput" class="pwInput" type="password" inputmode="text" autocomplete="current-password" placeholder="アクセスコード" />
       <button id="pwBtn" class="pwBtn">表示開始</button>
     </div>
-    <label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:.85rem;">
+    <label style="display:flex; gap:8px; align-items:center; margin-top:10px; font-size:0.85rem;">
       <input id="pwRemember" type="checkbox" /> この端末で記憶する
     </label>
     <div id="pwErr" class="pwErr"></div>
@@ -96,15 +175,16 @@
 </div>
 
 <div id="app">
-  <!-- ヘッダー -->
+
   <div class="toolbar">
+    <!-- 左側の二段コントロール -->
     <div class="left-controls">
+      <!-- 1段目：ダミータイトル -->
       <div class="title-row">
         <span class="dummy-title">通学経路/危険区間ビューア</span>
         <span class="dummy-subtitle">© 2025 PCRW Consultant.</span>
       </div>
-
-      <!-- 操作行：ロードボタン撤去、事故点トグル統合 -->
+      <!-- 2段目：操作ボタン -->
       <div class="controls-row">
         <div class="map-toggle">
           <input type="radio" name="basemap" value="normal" id="basemap_normal">
@@ -112,18 +192,15 @@
           <input type="radio" name="basemap" value="pale" id="basemap_pale" checked>
           <label for="basemap_pale" class="smallbtn">淡色MAP</label>
         </div>
-
-        <label id="acc-toggle-host" style="display:inline-flex;align-items:center;gap:6px;margin-left:10px;user-select:none;cursor:pointer;">
-          <input id="chk-accidents" type="checkbox" checked>
-          <span style="color:#c00;font-weight:700;">事故点表示</span>
-          <span id="acc-summary" style="margin-left:6px;color:#fff;font-weight:600;opacity:.9;"></span>
-        </label>
-
-        <span class="status" id="status">読込中…</span>
+        <button id="btnLoadRoute" class="smallbtn btnRoute" title="通学経路(.geojson)を選択して読み込み">通学経路をロード</button>
+        <input id="fileRoutes" type="file" accept=".geojson,.json,application/geo+json,application/json" style="display:none" />
+        <button id="btnLoadHazards" class="smallbtn btnHazard" title="危険区間(.geojson)を選択して読み込み">危険区間をロード</button>
+        <input id="fileHazards" type="file" accept=".geojson,.json,application/geo+json,application/json" style="display:none" />
+        <span class="status" id="status">未読込</span>
       </div>
     </div>
 
-    <!-- 右側：学校別フィルタ -->
+    <!-- 右側の二段フィルター -->
     <div class="right">
       <div class="row">
         <div class="caption"><span class="badgeLabel">通学経路</span></div>
@@ -142,324 +219,461 @@
 
   <div id="map"></div>
 
-  <!-- 凡例 -->
   <div class="legend" id="legendBox">
     <h4>凡例</h4>
-    <div><span class="icon" style="color:#0066ff;font-weight:900;font-size:1.4em;">—</span>通学経路</div>
-    <div><span class="icon" style="color:#06a10e;font-size:1.4em;">●</span>起点</div>
-    <div><span class="icon" style="color:#00c8ff;font-size:1.1em;">●</span>中継点</div>
-    <div><span class="icon" style="color:#FFC107;font-size:1.6em;">★</span>終点(高校)</div>
+    <div><span class="icon" style="color:#0066ff; font-weight:900; font-size:1.4em; vertical-align: middle;">—</span>通学経路</div>
+    <div><span class="icon" style="color:#06a10e; font-size:1.4em;">●</span>起点</div>
+    <div><span class="icon" style="color:#00c8ff; font-size:1.1em;">●</span>中継点</div>
+    <div><span class="icon" style="color:#FFC107; font-size:1.6em;">★</span>終点(高校)</div>
   </div>
 </div>
 
-<!-- #VIZへ。この行とその下の行は合わせて6MBの超長文だったので削除しました。GEOJSONは外部参照式にしたので不要なはずです。 -->
+
+  <!-- Embedded GeoJSON (routes & hazards) -->
+  // ==========================
+  // #VIZへ。この行とその下の行は合わせて6MBの超長文だったので削除しました。GEOJSONは外部参照式にしたので不要なはずです。
+  // ==========================
 
 <script>
-/* =========================
-   設定・共通関数
-   ========================= */
-const DEFAULT_CONFIG = {
-  route:  { color:"#0066ff", weight:3, opacity:0.95 },
-  marker: {
-    origin:{ radius:5, color:"#06a10e" },
-    via:{    radius:4, color:"#00c8ff" },
-    dest:{   radius:6, color:"#FFC107" }
-  },
-  uiLabels: {
-    "作新学院":"作新学院高等学校",
-    "宇短附高":"宇都宮短期大学附属高等学校",
-    "文星芸大":"文星芸大学附属高等学校",
-    "文星女子":"宇都文星女子高等学校",
-    "中央高校":"宇都宮中央高等学校",
-    "宇女高校":"宇都宮女子高等学校"
-  }
-};
-const shortToFull = DEFAULT_CONFIG.uiLabels;
-const fullToShort = {}; Object.entries(shortToFull).forEach(([s,f])=>fullToShort[f]=s);
-
-const HZ_COLOR="#DC143C", HZ_OPACITY=0.20, HZ_BASE_WEIGHT=12, MIN_RADIUS=0.5, MIN_WEIGHT=0.5;
-const LINE_SHRINK_ROUTE=0.5, LINE_SHRINK_HAZ=0.5;
-
-function toNum(v){ const n=Number(v); return Number.isFinite(n)?n:NaN; }
-function validLL(lat, lon){ return (Number.isFinite(lat)&&Number.isFinite(lon)&&Math.abs(lat)<=90&&Math.abs(lon)<=180&&!(Math.abs(lat)<1e-6&&Math.abs(lon)<1e-6)); }
-function fmtLL(lat, lon){ return `${lat.toFixed(5)}, ${lon.toFixed(5)}`; }
-function circle(lat, lon, color, radius, options={}){ const m=L.circleMarker([lat,lon],{radius,color,weight:2,fillColor:color,fillOpacity:.9,...options}); m._baseR=radius; return m; }
-function scaleFor(z){ if(z>=16)return 1.10; if(z>=15)return 1.00; if(z>=14)return 0.80; if(z>=13)return 0.65; if(z>=12)return 0.50; if(z>=11)return 0.35; if(z>=10)return 0.25; if(z>=9)return 0.18; return 0.10; }
-
-/* =========================
-   地図初期化
-   ========================= */
-const map = L.map('map');
-const baseNormal = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'});
-const basePale   = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{maxZoom:20,attribution:'&copy; OpenStreetMap & CARTO'});
-basePale.addTo(map);
-map.setView([36.56,139.88],12);
-document.getElementById('basemap_pale').checked = true;
-document.querySelectorAll('input[name="basemap"]').forEach(r=>{
-  r.addEventListener('change',()=>{
-    const v=document.querySelector('input[name="basemap"]:checked').value;
-    if(v==='normal'){ if(map.hasLayer(basePale)) map.removeLayer(basePale); baseNormal.addTo(map); }
-    else{ if(map.hasLayer(baseNormal)) map.removeLayer(baseNormal); basePale.addTo(map); }
-  });
-});
-
-/* =========================
-   レイヤ保持とズーム連動
-   ========================= */
-let ROUTES_GEO=null, HAZARDS_GEO=null;
-const routeGroupsBySchool=new Map(), routeMarkerGroupsBySchool=new Map(), hazardGroupsBySchool=new Map();
-const allRoutePolylines=[], allHazardPolylines=[];
-function applyZoomStyles(){
-  const z=map.getZoom(), sf=scaleFor(z);
-  allRoutePolylines.forEach(pl=>{ const bw=pl._baseW||pl.options.weight||DEFAULT_CONFIG.route.weight; pl.setStyle({weight:Math.max(MIN_WEIGHT,+(bw*(sf*LINE_SHRINK_ROUTE)).toFixed(2))}); });
-  allHazardPolylines.forEach(pl=>{ const bw=HZ_BASE_WEIGHT; pl.setStyle({weight:Math.max(MIN_WEIGHT,+(bw*(sf*LINE_SHRINK_HAZ)).toFixed(2))}); });
-  routeMarkerGroupsBySchool.forEach(grp=>{ grp.eachLayer(layer=>{ if(layer instanceof L.CircleMarker){ const base=layer._baseR||layer.options.radius||5; layer.setStyle({radius:Math.max(MIN_RADIUS,+(base*sf).toFixed(2))}); } }); });
-}
-map.on('zoomend', applyZoomStyles);
-
-/* =========================
-   右側：学校別パネル
-   ========================= */
-function uiLabelFor(s){ return fullToShort[s] || s; }
-function buildRoutePanel(counts){
-  const host=document.getElementById('schoolsRoutePanel'); host.innerHTML='';
-  const frag=document.createDocumentFragment(); const schools=Array.from(routeGroupsBySchool.keys()).sort();
-  for(const school of schools){
-    const label=document.createElement('label'); label.className='group';
-    const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=true; cb.dataset.school=school;
-    cb.addEventListener('change',e=>showRouteSchool(school,e.currentTarget.checked));
-    label.appendChild(cb); label.appendChild(document.createTextNode(uiLabelFor(school)+' '));
-    const small=document.createElement('span'); small.className='small'; small.textContent=`(${counts.get(school)||0})`;
-    label.appendChild(small); frag.appendChild(label);
-  }
-  host.appendChild(frag);
-}
-function showRouteSchool(school,on){ const rg=routeGroupsBySchool.get(school); const mg=routeMarkerGroupsBySchool.get(school);
-  if(rg){ on?rg.addTo(map):map.removeLayer(rg);} if(mg){ on?mg.addTo(map):map.removeLayer(mg);} }
-
-function buildHazardPanel(counts){
-  const host=document.getElementById('schoolsHazPanel'); host.innerHTML='';
-  const frag=document.createDocumentFragment(); const schools=Array.from(hazardGroupsBySchool.keys()).sort();
-  for(const school of schools){
-    const label=document.createElement('label'); label.className='group';
-    const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=true; cb.dataset.school=school;
-    cb.addEventListener('change',e=>showHazardSchool(school,e.currentTarget.checked));
-    label.appendChild(cb); label.appendChild(document.createTextNode(uiLabelFor(school)+' '));
-    const small=document.createElement('span'); small.className='small'; small.textContent=`(${counts.get(school)||0})`;
-    label.appendChild(small); frag.appendChild(label);
-  }
-  host.appendChild(frag);
-}
-function showHazardSchool(school,on){ const hg=hazardGroupsBySchool.get(school); if(hg){ on?hg.addTo(map):map.removeLayer(hg); } }
-
-/* =========================
-   描画（ルート／危険区間）
-   ========================= */
-function clearHazards(){ hazardGroupsBySchool.forEach(grp=>map.removeLayer(grp)); hazardGroupsBySchool.clear(); allHazardPolylines.length=0; }
-function drawHazards(fc){
-  clearHazards(); if(!fc?.features) return;
-  const counts=new Map(); const bounds=L.latLngBounds(); const sf=scaleFor(map.getZoom());
-  const addLine=(grp,coords)=>{ const latlngs=coords.map(([lon,lat])=>[lat,lon]);
-    const pl=L.polyline(latlngs,{color:HZ_COLOR,opacity:HZ_OPACITY,weight:Math.max(MIN_WEIGHT,+(HZ_BASE_WEIGHT*(sf*LINE_SHRINK_HAZ)).toFixed(2))});
-    pl.addTo(grp); allHazardPolylines.push(pl); latlngs.forEach(ll=>bounds.extend(ll)); };
-  fc.features.forEach(feat=>{
-    const g=feat.geometry; if(!g|| (g.type!=='LineString'&&g.type!=='MultiLineString')) return;
-    const school=(feat.properties?.school||'（学校名なし）')+'';
-    let grp=hazardGroupsBySchool.get(school); if(!grp){ grp=L.featureGroup(); hazardGroupsBySchool.set(school,grp); }
-    if(g.type==='LineString'){ if(g.coordinates?.length>=2){ addLine(grp,g.coordinates); counts.set(school,(counts.get(school)||0)+1); } }
-    else { (g.coordinates||[]).forEach(line=>{ if(line?.length>=2){ addLine(grp,line); counts.set(school,(counts.get(school)||0)+1); } }); }
-  });
-  hazardGroupsBySchool.forEach(grp=>grp.addTo(map)); return {bounds,counts};
-}
-
-function clearRoutes(){ routeGroupsBySchool.forEach(grp=>map.removeLayer(grp)); routeMarkerGroupsBySchool.forEach(grp=>map.removeLayer(grp));
-  routeGroupsBySchool.clear(); routeMarkerGroupsBySchool.clear(); allRoutePolylines.length=0; }
-function drawRoutes(fc){
-  clearRoutes(); if(!fc?.features) return;
-  const counts=new Map(); const bounds=L.latLngBounds(); const sf=scaleFor(map.getZoom());
-  fc.features.forEach(feat=>{
-    const g=feat.geometry; if(!g|| (g.type!=='LineString'&&g.type!=='MultiLineString')) return;
-    const props=feat.properties||{}; const school=(props.school||'（学校名なし）')+''; const short=fullToShort[school]||school;
-    let grpLine=routeGroupsBySchool.get(school); if(!grpLine){ grpLine=L.featureGroup(); routeGroupsBySchool.set(school,grpLine); }
-    let grpMark=routeMarkerGroupsBySchool.get(school); if(!grpMark){ grpMark=L.featureGroup(); routeMarkerGroupsBySchool.set(school,grpMark); }
-    const addLineAndMarkers=(coords)=>{
-      const latlngs=coords.map(([lon,lat])=>[lat,lon]);
-      const pl=L.polyline(latlngs,{color:DEFAULT_CONFIG.route.color,opacity:DEFAULT_CONFIG.route.opacity,
-        weight:Math.max(MIN_WEIGHT,+(DEFAULT_CONFIG.route.weight*(sf*LINE_SHRINK_ROUTE)).toFixed(2))}).addTo(grpLine);
-      pl._baseW=DEFAULT_CONFIG.route.weight; allRoutePolylines.push(pl); latlngs.forEach(ll=>bounds.extend(ll));
-      let o=props?.origin, v=props?.via_points||props?.via, d=props?.dest||props?.destination;
-      if(!o && latlngs.length>0) o={lat:latlngs[0][0], lon:latlngs[0][1]};
-      if(!d && latlngs.length>0) d={lat:latlngs.at(-1)[0], lon:latlngs.at(-1)[1]};
-      if(Array.isArray(v)){ v.forEach((vp,i)=>{ const vLat=toNum(vp?.lat), vLon=toNum(vp?.lon); if(validLL(vLat,vLon)){
-        circle(vLat,vLon,DEFAULT_CONFIG.marker.via.color,DEFAULT_CONFIG.marker.via.radius,{fillOpacity:.25}).addTo(grpMark);
-      }});}
-      if(o&&validLL(toNum(o.lat),toNum(o.lon))){ circle(toNum(o.lat),toNum(o.lon),DEFAULT_CONFIG.marker.origin.color,DEFAULT_CONFIG.marker.origin.radius).addTo(grpMark); }
-      if(d&&validLL(toNum(d.lat),toNum(d.lon))){ const baseFontSize=40;
-        const destIcon=L.divIcon({html:`<span style="color:${DEFAULT_CONFIG.marker.dest.color};font-size:${baseFontSize}px;line-height:1;">★</span>`, className:'', iconSize:[40,40], iconAnchor:[20,34]});
-        const m=L.marker([toNum(d.lat),toNum(d.lon)],{icon:destIcon,zIndexOffset:1000}).addTo(grpMark); m._baseFontSize=baseFontSize; }
-    };
-    if(g.type==='LineString'){ if(g.coordinates?.length>=2){ addLineAndMarkers(g.coordinates); counts.set(school,(counts.get(school)||0)+1); } }
-    else { (g.coordinates||[]).forEach(line=>{ if(line?.length>=2){ addLineAndMarkers(line); counts.set(school,(counts.get(school)||0)+1); } }); }
-  });
-  routeGroupsBySchool.forEach(grp=>grp.addTo(map)); routeMarkerGroupsBySchool.forEach(grp=>grp.addTo(map));
-  return {bounds,counts};
-}
-
-/* ステータス */
-function normalizeToFC(obj){
-  if(!obj) return {type:'FeatureCollection',features:[]};
-  if(obj.type==='FeatureCollection'&&Array.isArray(obj.features)) return obj;
-  if(obj.type==='Feature') return {type:'FeatureCollection',features:[obj]};
-  if(Array.isArray(obj)) return {type:'FeatureCollection',features:obj};
-  return {type:'FeatureCollection',features:[]};
-}
-function updateStatus(){ const hz=HAZARDS_GEO?.features?.length||0; const rt=ROUTES_GEO?.features?.length||0; document.getElementById('status').textContent=`危険:${hz} / ルート:${rt}`; }
-function fitAllBounds(boundsList){ const mix=L.latLngBounds(); boundsList.forEach(b=>{ if(b?.isValid()) mix.extend(b); }); if(mix.isValid()) map.fitBounds(mix,{padding:[20,20]}); }
-
-/* =========================
-   外部データ自動読込（/data）
-   ========================= */
-(async function autoFetch(){
-  const routeCandidates  = ['data/通学経路_V2.geojson','data/routes.geojson'];
-  const hazardCandidates = ['data/危険区間_V2.geojson','data/hazards.geojson'];
-
-  async function fetchFirstOk(cands){
-    for(const p of cands){
-      try{ const res=await fetch(p,{cache:'no-store'}); if(res.ok){ return JSON.parse(await res.text()); } }
-      catch(_){}
+  // ==========================
+  // 既定設定
+  // ==========================
+  const DEFAULT_CONFIG = {
+    basemap: "pale",
+    route:  { color:"#0066ff", weight:3, opacity:0.95 },
+    marker: {
+      origin:{ radius:5, color:"#06a10e" },
+      via:{    radius:4, color:"#00c8ff" },
+      dest:{   radius:6, color:"#FFC107" }
+    },
+    uiLabels: {
+      "作新学院":"作新学院高等学校",
+      "宇短附高":"宇都宮短期大学附属高等学校",
+      "文星芸大":"文星芸大学附属高等学校",
+      "文星女子":"宇都文星女子高等学校",
+      "中央高校":"宇都宮中央高等学校",
+      "宇女高校":"宇都宮女子高等学校"
     }
-    return null;
+  };
+  const fullToShort = {};
+  Object.entries(DEFAULT_CONFIG.uiLabels).forEach(([short, full]) => { fullToShort[full] = short; });
+
+  // ==========================
+  // 危険区間スタイル
+  // ==========================
+  const HZ_COLOR   = "#DC143C";
+  const HZ_OPACITY = 0.20;
+  const HZ_BASE_WEIGHT = 12;
+  const HZ_MIN_WEIGHT  = 0.5;
+  const HZ_MAX_WEIGHT  = 12;
+
+  // ==========================
+  // ズーム時の調整
+  // ==========================
+  const ZOOM_BASE = 13;
+  function scaleFor(z){
+    if (z >= 16) return 1.10; if (z >= 15) return 1.00; if (z >= 14) return 0.80;
+    if (z >= 13) return 0.65; if (z >= 12) return 0.50; if (z >= 11) return 0.35;
+    if (z >= 10) return 0.25; if (z >= 9)  return 0.18; return 0.10;
+  }
+  const MIN_RADIUS = 0.5;
+  const MIN_WEIGHT = 0.5;
+  const LINE_SHRINK_ROUTE = 0.5;
+  const LINE_SHRINK_HAZ   = 0.5;
+
+  // ==========================
+  // 地図初期化
+  // ==========================
+  const map = L.map('map');
+  const baseNormal = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' });
+  const basePale = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 20, attribution: '&copy; OpenStreetMap &copy; CARTO' });
+  basePale.addTo(map);
+  map.setView([36.56, 139.88], 12); // 宇都宮
+  document.querySelectorAll('input[name="basemap"]').forEach(r => {
+    r.addEventListener('change', () => {
+      const v = document.querySelector('input[name="basemap"]:checked').value;
+      if (v === 'normal') {
+        if (map.hasLayer(basePale)) map.removeLayer(basePale);
+        baseNormal.addTo(map);
+      } else {
+        if (map.hasLayer(baseNormal)) map.removeLayer(baseNormal);
+        basePale.addTo(map);
+      }
+    });
+  });
+
+  // ==========================
+  // アプリ状態
+  // ==========================
+  let ROUTES_GEO = null, HAZARDS_GEO = null;
+  const routeGroupsBySchool  = new Map(), routeMarkerGroupsBySchool = new Map(), hazardGroupsBySchool = new Map();
+  const allRoutePolylines  = [], allHazardPolylines = [];
+  const elFileRoutes  = document.getElementById('fileRoutes'), elBtnLoadRoute = document.getElementById('btnLoadRoute'),
+        elFileHazards = document.getElementById('fileHazards'), elBtnLoadHazards = document.getElementById('btnLoadHazards'),
+        elStatus = document.getElementById('status'), elSchoolsRoutePanel = document.getElementById('schoolsRoutePanel'),
+        elSchoolsHazPanel   = document.getElementById('schoolsHazPanel'), elBtnRouteAllOn  = document.getElementById('btnRouteAllOn'),
+        elBtnRouteAllOff = document.getElementById('btnRouteAllOff'), elBtnHazAllOn    = document.getElementById('btnHazAllOn'),
+        elBtnHazAllOff   = document.getElementById('btnHazAllOff');
+
+  // ==========================
+  // 汎用ユーティリティ
+  // ==========================
+  function toNum(v){ const n = Number(v); return Number.isFinite(n) ? n : NaN; }
+  function validLL(lat, lon){ return (Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && !(Math.abs(lat) < 1e-6 && Math.abs(lon) < 1e-6)); }
+  function fmtLL(lat, lon){ return `${lat.toFixed(5)}, ${lon.toFixed(5)}`; }
+  function fmtZip(zip) { return zip ? `${zip}` : '-'; }
+  function circle(lat, lon, color, radius, options = {}){
+    const defaultOptions = { radius, color, weight: 2, fillColor: color, fillOpacity: 0.9 };
+    const m = L.circleMarker([lat, lon], { ...defaultOptions, ...options });
+    m._baseR = radius;
+    return m;
+  }
+  function normalizeToFeatureCollection(obj) {
+    if (!obj) return { type: "FeatureCollection", features: [] };
+    if (obj.type === "FeatureCollection" && Array.isArray(obj.features)) return obj;
+    if (obj.type === "Feature") return { type: "FeatureCollection", features: [obj] };
+    if (Array.isArray(obj)) return { type: "FeatureCollection", features: obj };
+    return { type: "FeatureCollection", features: [] };
   }
 
-  try{
-    const [r,h]=await Promise.all([fetchFirstOk(routeCandidates), fetchFirstOk(hazardCandidates)]);
-    if(r) ROUTES_GEO=normalizeToFC(r);
-    if(h) HAZARDS_GEO=normalizeToFC(h);
-    const rb=ROUTES_GEO?drawRoutes(ROUTES_GEO):null;
-    const hb=HAZARDS_GEO?drawHazards(HAZARDS_GEO):null;
-    if(rb?.counts) buildRoutePanel(rb.counts);
-    if(hb?.counts) buildHazardPanel(hb.counts);
-    fitAllBounds([rb?.bounds, hb?.bounds]); applyZoomStyles(); updateStatus();
-  }catch(e){ console.error('Auto-fetch error', e); }
-})();
+  // ==========================
+  // ズーム連動スタイル
+  // ==========================
+  function applyZoomStyles(){
+    const z  = map.getZoom();
+    const sf = scaleFor(z);
 
-/* =========================
-   パスワード風ゲート（堅牢化）
-   ========================= */
-(function(){
-  const SECRET='PCRW2025', KEY='pcrw_gate_unlocked';
-  const gate=document.getElementById('pwGate'), input=document.getElementById('pwInput'),
-        btn=document.getElementById('pwBtn'), err=document.getElementById('pwErr'), remember=document.getElementById('pwRemember');
-
-  try{ const qs=new URLSearchParams(location.search); if(qs.get('unlock')==='1'||location.hash==='#unlock'){ localStorage.setItem(KEY,'1'); } }catch(_){}
-  try{ if(localStorage.getItem(KEY)==='1'){ unlock(); } }catch(_){}
-
-  function unlock(){ document.body.classList.remove('locked'); if(gate) gate.style.display='none'; document.dispatchEvent(new CustomEvent('pcrw:unlocked')); }
-  function fail(msg){ err.textContent=msg||'アクセスコードが違います。'; }
-  function tryUnlock(){
-    const v=(input?.value||'').trim();
-    if(!v){ fail('入力してください。'); return; }
-    if(v===SECRET){ if(remember?.checked){ try{ localStorage.setItem(KEY,'1'); }catch(_){}} unlock(); } else { fail(); }
-  }
-  btn?.addEventListener('click', tryUnlock);
-  input?.addEventListener('keydown', e=>{ if(e.key==='Enter') tryUnlock(); });
-  setTimeout(()=>{ input?.focus(); }, 0);
-})();
-
-/* =========================
-   V11: 事故CSV 自動読込（左上トグル）
-   ========================= */
-document.addEventListener('DOMContentLoaded', ()=>{
-  // 事故点を専用paneに（重なり優先度UP）
-  if(!map.getPane('accidents')){ map.createPane('accidents'); map.getPane('accidents').style.zIndex=650; }
-  const ACC_STYLE={ radius:4, color:'#c00', fillColor:'#c00', fillOpacity:.9, weight:1, pane:'accidents' };
-  const accidentsLayer=L.layerGroup();
-
-  const CSV_CANDIDATES=[
-    'data/交通事故データ2023.csv',
-    'data/交通事故データ.csv',
-    'data/accidents.csv',
-    'data/accident_points.csv'
-  ];
-
-  (async ()=>{
-    let csvUrl=null, lastErr=null;
-    for(const u of CSV_CANDIDATES){
-      try{ const r=await fetch(u,{cache:'no-cache'}); if(r.ok){ csvUrl=u; break; } else lastErr=`HTTP ${r.status}`; }
-      catch(e){ lastErr=e.message; }
-    }
-    if(!csvUrl){ setSummary('CSV未配置', true); console.warn('[V11] CSV not found:', lastErr); return; }
-
-    const text=await fetch(csvUrl,{cache:'no-cache'}).then(x=>x.text());
-    const parsed=Papa.parse(text,{ header:true, skipEmptyLines:true, transformHeader:h=>h.trim().replace(/\uFEFF/g,'') });
-    const rows=parsed.data; if(parsed.errors?.length){ console.warn('[V11] parse warnings:', parsed.errors.slice(0,5)); }
-
-    const col=detectColumns(rows);
-    let total=0, adopted=0, fixed=0, rejected=0;
-
-    rows.forEach((r,i)=>{
-      total++;
-      const c=pickCoord(r,col); if(!c){ rejected++; return; }
-      const when=buildDateTime(r,col); if(when?.fixed) fixed++;
-      L.circleMarker([c.lat,c.lng],ACC_STYLE).bindPopup(popupHtml(r, when?.text, i+1),{maxWidth:320}).addTo(accidentsLayer);
-      adopted++;
+    allRoutePolylines.forEach(pl => {
+      const bw = pl._baseW || pl.options.weight || DEFAULT_CONFIG.route.weight;
+      pl.setStyle({ weight: Math.max(MIN_WEIGHT, +(bw * (sf * LINE_SHRINK_ROUTE)).toFixed(2)) });
+    });
+    allHazardPolylines.forEach(pl => {
+      const bw = HZ_BASE_WEIGHT;
+      pl.setStyle({ weight: Math.max(MIN_WEIGHT, +(bw * (sf * LINE_SHRINK_HAZ)).toFixed(2)) });
     });
 
-    if(adopted>0){ accidentsLayer.addTo(map); }
-    setSummary(`採用${adopted} / 除外${rejected}${fixed?` / 補正${fixed}`:''}`, adopted===0);
+    routeMarkerGroupsBySchool.forEach(grp => {
+      grp.eachLayer(layer => {
+        if (layer instanceof L.CircleMarker){
+          const base = layer._baseR || layer.options.radius || 5;
+          layer.setStyle({ radius: Math.max(MIN_RADIUS, +(base * sf).toFixed(2)) });
+        }
+        if (layer instanceof L.Marker && layer.options.icon instanceof L.DivIcon && layer._baseFontSize) {
+          const iconEl = layer.getElement().querySelector('span');
+          if (iconEl) {
+            const newSize = Math.max(8, layer._baseFontSize * sf * 0.8);
+            iconEl.style.fontSize = `${newSize.toFixed(1)}px`;
+          }
+        }
+      });
+    });
+  }
+  map.on("zoomend", applyZoomStyles);
 
-    const chk=document.getElementById('chk-accidents');
-    chk.addEventListener('change',()=>{ chk.checked ? accidentsLayer.addTo(map) : map.removeLayer(accidentsLayer); });
+  // ==========================
+  // 学校パネル
+  // ==========================
+  function uiLabelFor(school){ return fullToShort[school] || school; }
+  function buildRoutePanel(countsRoute){
+    elSchoolsRoutePanel.innerHTML = "";
+    const frag = document.createDocumentFragment();
+    const schools = Array.from(routeGroupsBySchool.keys()).sort();
+    for (const school of schools){
+      const label = document.createElement("label"); label.className = "group";
+      const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = true; cb.dataset.school = school;
+      cb.addEventListener("change", (e)=> showRouteSchool(school, e.currentTarget.checked));
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(uiLabelFor(school)+" "));
+      const small = document.createElement("span"); small.className = "small"; small.textContent = `(${countsRoute.get(school)||0})`;
+      label.appendChild(small); frag.appendChild(label);
+    }
+    elSchoolsRoutePanel.appendChild(frag);
+  }
+  function showRouteSchool(school, on){
+    const rg = routeGroupsBySchool.get(school); const mg = routeMarkerGroupsBySchool.get(school);
+    if (rg) { if (on) rg.addTo(map); else map.removeLayer(rg); }
+    if (mg) { if (on) mg.addTo(map); else map.removeLayer(mg); }
+  }
+  elBtnRouteAllOn.addEventListener("click", ()=>{ elSchoolsRoutePanel.querySelectorAll('input[type="checkbox"]').forEach(cb=>{ cb.checked = true; showRouteSchool(cb.dataset.school, true); }); });
+  elBtnRouteAllOff.addEventListener("click", ()=>{ elSchoolsRoutePanel.querySelectorAll('input[type="checkbox"]').forEach(cb=>{ cb.checked = false; showRouteSchool(cb.dataset.school, false); }); });
 
-    console.info('[V11] 事故CSV',{file:csvUrl,total,adopted,rejected,fixed,columns:col});
-  })();
+  function buildHazardPanel(countsHazard){
+    elSchoolsHazPanel.innerHTML = "";
+    const frag = document.createDocumentFragment();
+    const schools = Array.from(hazardGroupsBySchool.keys()).sort();
+    for (const school of schools){
+      const label = document.createElement("label"); label.className = "group";
+      const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = true; cb.dataset.school = school;
+      cb.addEventListener("change", (e)=> showHazardSchool(school, e.currentTarget.checked));
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(uiLabelFor(school)+" "));
+      const small = document.createElement("span"); small.className = "small"; small.textContent = `(${countsHazard.get(school)||0})`;
+      label.appendChild(small); frag.appendChild(label);
+    }
+    elSchoolsHazPanel.appendChild(frag);
+  }
+  function showHazardSchool(school, on){ const hg = hazardGroupsBySchool.get(school); if (hg) { if (on) hg.addTo(map); else map.removeLayer(hg); } }
+  elBtnHazAllOn.addEventListener("click", ()=>{ elSchoolsHazPanel.querySelectorAll('input[type="checkbox"]').forEach(cb=>{ cb.checked = true; showHazardSchool(cb.dataset.school, true); }); });
+  elBtnHazAllOff.addEventListener("click", ()=>{ elSchoolsHazPanel.querySelectorAll('input[type="checkbox"]').forEach(cb=>{ cb.checked = false; showHazardSchool(cb.dataset.school, false); }); });
 
-  function setSummary(text, warn=false){
-    const el=document.getElementById('acc-summary'); el.textContent=`（${text}）`; el.style.color = warn ? '#ff0' : '#fff';
+  // ==========================
+  // 描画
+  // ==========================
+  function clearHazards() { hazardGroupsBySchool.forEach(grp => map.removeLayer(grp)); hazardGroupsBySchool.clear(); allHazardPolylines.length = 0; }
+  function drawHazards(geojson) {
+    clearHazards(); if (!geojson || !Array.isArray(geojson.features)) return;
+    const counts = new Map(); const bounds = L.latLngBounds(); const z = map.getZoom(); const sf = scaleFor(z);
+    const addLine = (grp, coords) => {
+      const latlngs = coords.map(([lon, lat]) => [lat, lon]);
+      const pl = L.polyline(latlngs, { color: HZ_COLOR, opacity: HZ_OPACITY, weight: Math.max(MIN_WEIGHT, +(HZ_BASE_WEIGHT * (sf * LINE_SHRINK_HAZ)).toFixed(2)) });
+      pl.addTo(grp); allHazardPolylines.push(pl); latlngs.forEach(ll => bounds.extend(ll));
+    };
+    geojson.features.forEach((feat) => {
+      if (!feat || !feat.geometry) return; const g = feat.geometry; if (g.type !== "LineString" && g.type !== "MultiLineString") return;
+      const school = ((feat.properties && feat.properties.school) || "（学校名なし）").toString();
+      let grp = hazardGroupsBySchool.get(school); if (!grp) { grp = L.featureGroup(); hazardGroupsBySchool.set(school, grp); }
+      if (g.type === "LineString") { if (Array.isArray(g.coordinates) && g.coordinates.length >= 2) { addLine(grp, g.coordinates); counts.set(school, (counts.get(school) || 0) + 1); }
+      } else { (g.coordinates || []).forEach(line => { if (Array.isArray(line) && line.length >= 2) { addLine(grp, line); counts.set(school, (counts.get(school) || 0) + 1); } }); }
+    });
+    hazardGroupsBySchool.forEach(grp => grp.addTo(map)); return { bounds, counts };
   }
 
-  // --- CSVユーティリティ ---
-  function detectColumns(rows){
-    const head=rows[0]??{}; const keys=Object.keys(head).map(k=>k.trim());
-    const find=cands=>keys.find(k=>cands.some(c=>k.toLowerCase()===c.toLowerCase()));
-    const lat=find(['lat','latitude','緯度','y','Y']);
-    const lng=find(['lon','lng','longitude','経度','x','X']);
-    const latE7=find(['lat_e7','latitude_e7','緯度e7','緯度_1e7']);
-    const lngE7=find(['lon_e7','lng_e7','longitude_e7','経度e7','経度_1e7']);
-    const date=find(['date','日時','日付','発生日時']);
-    const y=find(['year','yyyy','年']), m=find(['month','mm','月']), d=find(['day','dd','日']);
-    const hh=find(['hour','hh','時']), mm=find(['minute','min','分']);
-    return { lat, lng, latE7, lngE7, date, y, m, d, hh, mm };
+  function clearRoutes() { routeGroupsBySchool.forEach(grp => map.removeLayer(grp)); routeMarkerGroupsBySchool.forEach(grp => map.removeLayer(grp)); routeGroupsBySchool.clear(); routeMarkerGroupsBySchool.clear(); allRoutePolylines.length = 0; }
+  function drawRoutes(geojson) {
+    clearRoutes(); if (!geojson || !Array.isArray(geojson.features)) return;
+    const counts = new Map(); const bounds = L.latLngBounds(); const z = map.getZoom(); const sf = scaleFor(z);
+    geojson.features.forEach((feat) => {
+      if (!feat || !feat.geometry) return; const g = feat.geometry; if (g.type !== "LineString" && g.type !== "MultiLineString") return;
+      const props  = feat.properties || {}; const school = (props.school || "（学校名なし）").toString(); const short  = fullToShort[school] || school;
+      let grpLine = routeGroupsBySchool.get(school); if (!grpLine) { grpLine = L.featureGroup(); routeGroupsBySchool.set(school, grpLine); }
+      let grpMark = routeMarkerGroupsBySchool.get(school); if (!grpMark) { grpMark = L.featureGroup(); routeMarkerGroupsBySchool.set(school, grpMark); }
+      const addLineAndMarkers = (coords) => {
+        const latlngs = coords.map(([lon, lat]) => [lat, lon]);
+        const pl = L.polyline(latlngs, { color: DEFAULT_CONFIG.route.color, opacity: DEFAULT_CONFIG.route.opacity, weight: Math.max(MIN_WEIGHT, +(DEFAULT_CONFIG.route.weight * (sf * LINE_SHRINK_ROUTE)).toFixed(2)) }).addTo(grpLine);
+        pl._baseW = DEFAULT_CONFIG.route.weight;
+        const dist_m  = Number(props.distance_m); const dist_km = Number.isFinite(dist_m) ? (dist_m / 1000) : null; const distText = (dist_km === null) ? '-' : (Math.round(dist_km*10)/10).toFixed(1) + ' km';
+        pl.bindTooltip(`No: ${props.no ?? '-'}　ID: ${props.id ?? '-'}<br>高校: ${short}<br>距離: ${distText}`, {sticky:true});
+        allRoutePolylines.push(pl); latlngs.forEach(ll => bounds.extend(ll));
+        let o = props?.origin, v = props?.via_points || props?.via, d = props?.dest || props?.destination;
+        if (!o && latlngs.length > 0) o = { lat: latlngs[0][0], lon: latlngs[0][1] }; if (!d && latlngs.length > 0) d = { lat: latlngs[latlngs.length-1][0], lon: latlngs[latlngs.length-1][1] };
+        
+        // 経由地(中継点)の描画ロジック
+        if (Array.isArray(v)) { v.forEach((vp, i) => { const vLat = toNum(vp?.lat), vLon = toNum(vp?.lon); if (validLL(vLat, vLon)){
+          const tip = `No.${props.no ?? '-'} ID:${props.id ?? '-'}<br>高校: ${short}<br>経由地${i+1}: ${vp.name || ''}<br>座標: ${fmtLL(vLat,vLon)}`;
+          circle(vLat, vLon, DEFAULT_CONFIG.marker.via.color, DEFAULT_CONFIG.marker.via.radius, { fillOpacity: 0.25 }).addTo(grpMark).bindTooltip(tip, {direction:'top',sticky:true});
+        }});}
+        
+        // 起点の描画ロジック
+        if (o && validLL(toNum(o.lat), toNum(o.lon))){
+          const tip = `No.${props.no ?? '-'} ID:${props.id ?? '-'}<br>高校: ${short}<br>郵便番号: ${fmtZip(props.zip)}<br>座標: ${fmtLL(toNum(o.lat),toNum(o.lon))}`;
+          circle(toNum(o.lat), toNum(o.lon), DEFAULT_CONFIG.marker.origin.color, DEFAULT_CONFIG.marker.origin.radius).addTo(grpMark).bindTooltip(tip, {direction:'top', sticky:true});
+        }
+        
+        // 終点(★)の描画ロジック
+        if (d && validLL(toNum(d.lat), toNum(d.lon))){
+           const tip = `No.${props.no ?? '-'} ID:${props.id ?? '-'}<br>高校: ${short}<br>高校名(正規名): ${school}<br>座標: ${fmtLL(toNum(d.lat),toNum(d.lon))}`;
+          const baseFontSize = 40;
+          const destIcon = L.divIcon({
+            html: `<span style="color: ${DEFAULT_CONFIG.marker.dest.color}; font-size: ${baseFontSize}px; line-height: 1;">★</span>`,
+            className: '', iconSize: [40, 40], iconAnchor: [20, 34]
+          });
+          const m = L.marker([toNum(d.lat), toNum(d.lon)], { icon: destIcon, zIndexOffset: 1000 }).addTo(grpMark);
+          m._baseFontSize = baseFontSize;
+          m.bindTooltip(tip, {direction:'top',sticky:true});
+        }
+      };
+      if (g.type === "LineString") { if (Array.isArray(g.coordinates) && g.coordinates.length >= 2) { addLineAndMarkers(g.coordinates); counts.set(school, (counts.get(school) || 0) + 1); }
+      } else { (g.coordinates || []).forEach(line => { if (Array.isArray(line) && line.length >= 2) { addLineAndMarkers(line); counts.set(school, (counts.get(school) || 0) + 1); } }); }
+    });
+    routeGroupsBySchool.forEach(grp => grp.addTo(map)); routeMarkerGroupsBySchool.forEach(grp => grp.addTo(map));
+    return { bounds, counts };
   }
-  function pickCoord(r,col){
-    const read=v=>(v==null||v==='')?NaN:Number(String(v).trim());
-    let lat=NaN,lng=NaN;
-    if(col.lat&&col.lng){ lat=read(r[col.lat]); lng=read(r[col.lng]); }
-    if(!isFinite(lat)||!isFinite(lng)){ if(col.latE7&&col.lngE7){ const le7=read(r[col.latE7]), ge7=read(r[col.lngE7]); if(isFinite(le7)&&isFinite(ge7)){ lat=le7/1e7; lng=ge7/1e7; } } }
-    if(!isFinite(lat)||!isFinite(lng)) return null;
-    if(lat<20||lat>46||lng<122||lng>154) return null; // 日本域
-    return {lat,lng};
-  }
-  function buildDateTime(r,col){
-    const pad=n=>String(n).padStart(2,'0');
-    const jst=(y,m,d,hh=0,mm=0)=>{ try{ const dt=new Date(+y,+m-1,+d,+hh,+mm); const wd=['日','月','火','水','木','金','土'][dt.getDay()];
-      return { text:`${y}/${pad(m)}/${pad(d)}(${wd})${pad(hh)}:${pad(mm)}`, fixed:false }; }catch(e){ return null; } };
-    if(col.date && r[col.date]){ const t=String(r[col.date]).replace(/[年\-\.]/g,'/').replace('T',' ').trim();
-      const m=t.match(/(\d{4})\/(\d{1,2})\/(\d{1,2})(?:\s+(\d{1,2}):(\d{1,2}))?/); if(m) return jst(m[1],m[2],m[3],m[4]??0,m[5]??0); }
-    if(col.y&&col.m&&col.d){ const Y=r[col.y],M=r[col.m],D=r[col.d],H=col.hh?(r[col.hh]??0):0,Min=col.mm?(r[col.mm]??0):0; return jst(Y,M,D,H,Min); }
-    return null;
-  }
-  function popupHtml(row, whenText, seq){
-    const safe=v=>(v==null||v==='')?'-':String(v);
-    return `<div style="font:12px/1.4 sans-serif;">
-      <div style="font-weight:600;margin-bottom:4px;">事故 #${seq}${whenText?`｜${whenText}`:''}</div>
-      <table style="border-collapse:collapse;">
-        ${Object.keys(row).slice(0,8).map(k=>`<tr><td style="padding:2px 6px;color:#666;">${k}</td><td style="padding:2px 6px;">${safe(row[k])}</td></tr>`).join('')}
-      </table></div>`;
+
+  // ==========================
+  // ファイル→JSON / 描画フロー
+  // ==========================
+  function pickFile(inputEl) { inputEl.click(); }
+  async function readLocalJSON(file) { const txt = await file.text(); return JSON.parse(txt); }
+  function updateStatus() { const hz = HAZARDS_GEO?.features?.length || 0; const rt = ROUTES_GEO?.features?.length || 0; elStatus.textContent = `危険:${hz} / ルート:${rt}`; }
+  function fitAllBounds(boundsList) { const mix = L.latLngBounds(); boundsList.forEach(b => { if (b && b.isValid()) mix.extend(b); }); if (mix.isValid()) map.fitBounds(mix, { padding: [20,20] }); }
+  elBtnLoadRoute.addEventListener("click", () => pickFile(elFileRoutes));
+  elFileRoutes.addEventListener("change", async (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    try {
+      const obj = await readLocalJSON(f); ROUTES_GEO = normalizeToFeatureCollection(obj); const r = drawRoutes(ROUTES_GEO);
+      buildRoutePanel(r?.counts || new Map()); fitAllBounds([r?.bounds]); applyZoomStyles(); updateStatus();
+    } catch (err) { console.error(err); alert("通学経路GeoJSONの読み込み/解析に失敗しました。"); } finally { e.target.value = ""; }
+  });
+  elBtnLoadHazards.addEventListener("click", () => pickFile(elFileHazards));
+  elFileHazards.addEventListener("change", async (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    try {
+      const obj = await readLocalJSON(f); HAZARDS_GEO = normalizeToFeatureCollection(obj); const h = drawHazards(HAZARDS_GEO);
+      buildHazardPanel(h?.counts || new Map()); fitAllBounds([h?.bounds]); applyZoomStyles(); updateStatus();
+    } catch (err) { console.error(err); alert("危険区間GeoJSONの読み込み/解析に失敗しました。"); } finally { e.target.value = ""; }
+  });
+  updateStatus();
+
+
+document.addEventListener('DOMContentLoaded', () => {
+  try {
+    const rEl = document.getElementById('routesData');
+    const hEl = document.getElementById('hazardsData');
+    if (rEl || hEl) {
+      if (rEl) { 
+        const rRaw = rEl.textContent; 
+        ROUTES_GEO = normalizeToFeatureCollection(JSON.parse(rRaw)); 
+      }
+      if (hEl) { 
+        const hRaw = hEl.textContent; 
+        HAZARDS_GEO = normalizeToFeatureCollection(JSON.parse(hRaw)); 
+      }
+      const r = ROUTES_GEO ? drawRoutes(ROUTES_GEO) : null;
+      const h = HAZARDS_GEO ? drawHazards(HAZARDS_GEO) : null;
+      if (r && r.counts) buildRoutePanel(r.counts);
+      if (h && h.counts) buildHazardPanel(h.counts);
+      fitAllBounds([r?.bounds, h?.bounds]);
+      applyZoomStyles();
+      updateStatus();
+      // Disable load buttons to communicate "embedded"
+      if (typeof elBtnLoadRoute !== 'undefined' && elBtnLoadRoute) {
+        elBtnLoadRoute.disabled = true;
+        elBtnLoadRoute.textContent = '通学経路（内蔵）';
+        elBtnLoadRoute.title = '内蔵データを使用中';
+      }
+      if (typeof elBtnLoadHazards !== 'undefined' && elBtnLoadHazards) {
+        elBtnLoadHazards.disabled = true;
+        elBtnLoadHazards.textContent = '危険区間（内蔵）';
+        elBtnLoadHazards.title = '内蔵データを使用中';
+      }
+    }
+  } catch (e) {
+    console.error('Embedded data load error:', e);
   }
 });
+
 </script>
 
-<!-- 注意：このページは fetch を用います。ローカル直開き(file://)では動作しません。GitHub Pages / Netlify 等のHTTPSでご確認ください。 -->
+<script>
+(function(){
+  // Helper: normalize to FeatureCollection
+  function toFC(obj){
+    if (!obj) return null;
+    if (obj.type === 'FeatureCollection') return obj;
+    if (obj.type && obj.coordinates) { // Geometry
+      return { type:'FeatureCollection', features:[{type:'Feature', geometry: obj, properties:{}}] };
+    }
+    return obj;
+  }
+  // Try a list of candidate paths for each dataset
+  const routeCandidates  = ['./data/通学経路_V2.geojson','./data/routes.geojson','./通学経路_V2.geojson','./routes.geojson'];
+  const hazardCandidates = ['./data/危険区間_V2.geojson','./data/hazards.geojson','./危険区間_V2.geojson','./hazards.geojson'];
+
+  async function fetchFirstOk(cands){
+    for (const p of cands){
+      try{
+        const res = await fetch(p, {cache:'no-store'});
+        if (res.ok){
+          const text = await res.text();
+          try { return JSON.parse(text); } catch(e){ console.error('JSON parse failed for', p, e); }
+        }
+      }catch(e){ /* continue */ }
+    }
+    return null;
+  }
+
+  async function boot(){
+    try{
+      const [r,h] = await Promise.all([fetchFirstOk(routeCandidates), fetchFirstOk(hazardCandidates)]);
+      if (r){
+        window.ROUTES_GEO = toFC(r);
+      }
+      if (h){
+        window.HAZARDS_GEO = toFC(h);
+      }
+      // Draw using existing functions if available, else raw Leaflet
+      const map = window.map || window.MAP || window.LMAP || null;
+      const drawn = {routes:null, hazards:null};
+      if (window.drawRoutes && window.ROUTES_GEO){
+        drawn.routes = window.drawRoutes(window.ROUTES_GEO);
+      } else if (map && window.L && window.ROUTES_GEO){
+        L.geoJSON(window.ROUTES_GEO, {style:{weight:1, opacity:0.7}}).addTo(map);
+      }
+      if (window.drawHazards && window.HAZARDS_GEO){
+        drawn.hazards = window.drawHazards(window.HAZARDS_GEO);
+      } else if (map && window.L && window.HAZARDS_GEO){
+        L.geoJSON(window.HAZARDS_GEO, {style:{color:'#c62828', weight:2, opacity:0.9}}).addTo(map);
+      }
+
+      // Disable legacy load buttons if present
+      try{
+        if (window.elBtnLoadRoute){ elBtnLoadRoute.disabled = true; elBtnLoadRoute.textContent = '通学経路（外部データ）'; }
+        if (window.elBtnLoadHazards){ elBtnLoadHazards.disabled = true; elBtnLoadHazards.textContent = '危険区間（外部データ）'; }
+      }catch(_){}
+
+      // Fit bounds if possible
+      try{
+        const boundsList = [];
+        if (drawn.routes?.bounds) boundsList.append(drawn.routes.bounds);
+        if (drawn.hazards?.bounds) boundsList.append(drawn.hazards.bounds);
+      }catch(_){}
+
+      if (typeof window.updateStatus === 'function'){ window.updateStatus(); }
+    }catch(e){
+      console.error('Auto-fetch init error', e);
+    }
+  }
+  if (document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
+  }
+})();
+</script>
+
+<script>
+(function(){
+  // 軽量パスワード風ゲート：正しければ地図UIを解放するだけ（本格認証ではありません）
+  const SECRET = 'PCRW2025'; // ★必要に応じて変更してください
+  const KEY = 'pcrw_gate_unlocked';
+  const gate = document.getElementById('pwGate');
+  const input = document.getElementById('pwInput');
+  const btn = document.getElementById('pwBtn');
+  const err = document.getElementById('pwErr');
+  const remember = document.getElementById('pwRemember');
+
+  // すでに通過済みなら自動解放
+  try{
+    const saved = localStorage.getItem(KEY);
+    if (saved === '1') { unlock(); }
+  }catch(_){}
+
+  function unlock(){
+    document.body.classList.remove('locked');
+    if (gate) gate.style.display = 'none';
+    // 下層に通知したい場合はカスタムイベントを発火（既存実装はオーバーレイで隠す方式）
+    document.dispatchEvent(new CustomEvent('pcrw:unlocked'));
+  }
+  function fail(msg){ err.textContent = msg || 'アクセスコードが違います。'; }
+
+  function tryUnlock(){
+    const v = (input.value || '').trim();
+    if (!v) { fail('入力してください。'); return; }
+    if (v === SECRET){
+      if (remember.checked){
+        try{ localStorage.setItem(KEY, '1'); }catch(_){}
+      }
+      unlock();
+    } else {
+      fail();
+    }
+  }
+
+  btn?.addEventListener('click', tryUnlock);
+  input?.addEventListener('keydown', (e)=>{ if (e.key === 'Enter') tryUnlock(); });
+  // フォーカス
+  setTimeout(()=>{ input?.focus(); }, 0);
+})();
+</script>
 </body>
 </html>
