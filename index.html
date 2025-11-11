@@ -687,10 +687,10 @@ document.addEventListener('DOMContentLoaded', () => {
 (async function(){
   // 読み込みを試行するGeoJSONファイル名の候補リスト
   const candidates = [
-    '交通事故(2019-2024).geojson'
+    '交通事故(2019-2024).geojson', // ★ 修正A: コンマを追加
     '交通事故(2019-2024).geojson', // DEXのアップロードファイル名
     '事故箇所.geojson', 
-    '事故点.geojson'
+    '事故点.geojson', // ★ 修正A: コンマを追加
     '交通事故点.geojson', 
     'accident_points.geojson'
   ];
@@ -721,21 +721,31 @@ document.addEventListener('DOMContentLoaded', () => {
   let count = 0, bounds = L.latLngBounds();
   
   // GeoJSONのフィーチャー（Feature）を1つずつ処理
-  (data.features || []).forEach(f=>{
+  let rejectedCount = 0;
+  (data.features || []).forEach((f, index)=>{
     // 点データ(Point)でなければスキップ
     if(!f.geometry || f.geometry.type!=='Point') return;
     
     // 座標 [lon, lat] を取得
     const [lon,lat] = f.geometry.coordinates || [];
-    if(!isFinite(lat)||!isFinite(lon)) return; // 座標が有効な数値か確認
+
+    // 座標の妥当性チェック (日本周辺の緯度/経度範囲を追加)
+    if(!isFinite(lat) || !isFinite(lon) || lat < 20 || lat > 46 || lon < 122 || lon > 154) {
+      rejectedCount++;
+      if(rejectedCount < 5 || index % 1000 === 0) {
+        // 最初のエラーと1000件ごとのエラーのみログに出力
+        console.warn(`[Draw Error] Feature ${index+1}: Invalid coordinates or out of range. [${lon}, ${lat}]`);
+      }
+      return;
+    }
     
     const p = f.properties || {};
     
-    // ツールチップの内容を簡易作成
+    // ツールチップの内容を簡易作成 (変更なし)
     const date = p.Datetime || p['発生日時'] || '日時不明';
-    const dead = p['死者数'] != null ? `死:${p['死者数']}` : '死:-';
-    const injured = p['負傷者数'] != null ? `傷:${p['負傷者数']}` : '傷:-';
-    const tip = `${date} / ${dead} / ${injured}`;
+    const dead = p['死者数'] != null ? ` / 死:${p['死者数']}` : ' / 死:-';
+    const injured = p['負傷者数'] != null ? ` / 傷:${p['負傷者数']}` : ' / 傷:-';
+    const tip = `${date}${dead}${injured}`;
     
     // L.circleMarker (小さな円マーカー) を地図に描画
     L.circleMarker([lat,lon], {
@@ -749,8 +759,12 @@ document.addEventListener('DOMContentLoaded', () => {
     
     bounds.extend([lat,lon]); // 表示範囲（bounds）を更新
     count++;
-  });
-  
+  }); // ★ forEachの閉じカッコ
+
+  if(rejectedCount > 0) {
+    console.error(`[Draw Summary] Total rejected due to bad coords: ${rejectedCount}件。`);
+  } // ★ 修正B: 余計な閉じカッコを削除し、ifブロックを閉じる
+
   // 点が1つでもあれば、その全体が見えるように地図のズームを調整 (fitBounds)
   if(count>0){ 
     // pad(0.05) は、表示範囲の周りに5%の余白を持たせるための調整
