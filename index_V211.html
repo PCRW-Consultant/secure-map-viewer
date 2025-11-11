@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Secure web page - 通学経路・危険区間ビューアーPCRW ver211</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+  <style>
+    /* UI共通 */
+    html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", sans-serif; }
+    #app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
+
+    /* パスコード風ゲート */
+    body.locked { overflow: hidden; }
+    #pwGate { position: fixed; inset: 0; z-index: 99999; background: rgba(20,20,20,0.92);
+      display: flex; align-items: center; justify-content: center; }
+    #pwCard { width: min(520px, 92vw); background: #1f2937; color: #e5e7eb; border-radius: 16px; 
+      box-shadow: 0 10px 30px rgba(0,0,0,0.4); padding: 28px 24px 22px; }
+    #pwCard h1 { font-size: 1.1rem; font-weight: 600; margin: 0 0 6px; color: #f9fafb; }
+    #pwCard p { font-size: 0.9rem; line-height: 1.5; color: #cbd5e1; margin: 0 0 16px; }
+    .pwRow { display:flex; gap:10px; margin-top: 10px; }
+    .pwInput { flex:1; padding: 10px; border: 1px solid #374151; border-radius: 6px; 
+      background: #111827; color: #fff; font-size: 1rem; }
+    .pwBtn { padding: 10px 18px; background: #3b82f6; color: white; border: none; 
+      border-radius: 6px; cursor: pointer; font-size: 1rem; }
+    #pwErr { color: #f87171; font-size: 0.9rem; margin-top: 10px; height: 1.2em; }
+
+    /* ヘッダー */
+    header { display: flex; justify-content: space-between; align-items: center; 
+      background: #202c3b; color: #fff; padding: 10px 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); z-index: 1000; }
+    .header-left, .header-right { display: flex; align-items: center; gap: 15px; }
+    .header-right label { font-size: 0.9rem; cursor: pointer; display: flex; align-items: center; gap: 5px; }
+
+    /* マップ */
+    #map { flex-grow: 1; z-index: 1; }
+    .leaflet-tile-pane { filter: grayscale(0.25); } /* 標準マップをやや淡色化 */
+    #map.dark .leaflet-tile-pane { filter: grayscale(0.5) brightness(0.85); } /* 淡色マップ */
+
+    /* 右側サイドパネル */
+    #rightPanel { position: absolute; top: 70px; right: 15px; z-index: 1000; 
+      background: rgba(32, 44, 59, 0.9); padding: 10px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+      max-width: 200px; color: #e5e7eb; font-size: 0.9rem; }
+    .panel-section { margin-bottom: 10px; padding-bottom: 5px; border-bottom: 1px solid #374151; }
+    .panel-section:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+    .panel-section h3 { margin: 0 0 8px; font-size: 1rem; font-weight: 600; color: #f9fafb; }
+    .panel-section label { display: block; margin-bottom: 4px; cursor: pointer; }
+    .panel-summary { font-size: 0.8rem; color: #bbb; margin-top: 4px; }
+  </style>
+
+</head>
+<body class="locked">
+  <div id="app">
+    <header>
+      <div class="header-left">
+        <h1 style="font-size:1.2rem; font-weight:700; margin:0;">通学路安全マップ V211</h1>
+        <button id="mapStyleToggle" style="padding: 6px 10px; border: none; border-radius: 4px; background: #525252; color: white; cursor: pointer;">淡色MAP</button>
+      </div>
+      <div class="header-right">
+        <label>
+          <input type="checkbox" id="chk-accidents" disabled>
+          事故点
+        </label>
+      </div>
+    </header>
+
+    <div id="map"></div>
+
+    <div id="rightPanel">
+      <div class="panel-section">
+        <h3>通学経路</h3>
+        <label><input type="checkbox" id="chk-routes" checked> 経路線</label>
+        <div id="route-summary" class="panel-summary">（読込中...）</div>
+      </div>
+      <div class="panel-section">
+        <h3>危険区間</h3>
+        <label><input type="checkbox" id="chk-hazards" checked> 危険区間線</label>
+        <div id="hazard-summary" class="panel-summary">（読込中...）</div>
+      </div>
+      <div class="panel-section">
+        <h3>事故点</h3>
+        <div id="acc-summary" class="panel-summary">（読込中...）</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="pwGate">
+    <div id="pwCard">
+      <h1>アクセス確認</h1>
+      <p>このページは機密情報を含むため、アクセスコードが必要です。</p>
+      <div class="pwRow">
+        <input type="password" id="pwInput" class="pwInput" placeholder="アクセスコード">
+        <button id="pwBtn" class="pwBtn">解除</button>
+      </div>
+      <div style="margin-top: 10px; display:flex; gap:10px; align-items:center;">
+        <input type="checkbox" id="pwRemember" checked>
+        <label for="pwRemember" style="font-size:0.9rem; color:#9ca3af;">次回以降も記憶する</label>
+      </div>
+      <div id="pwErr"></div>
+    </div>
+  </div>
+
+<script>
+// V211: V12.2Base UI + V111L (Routes/Hazards) + Corrected Accident GeoJSON Logic
+
+// Leafletマップのグローバル変数
+let map;
+
+/* =========================
+   共通ユーティリティ関数
+   ========================= */
+
+// GeoJSONやその他のデータをフェッチする共通関数
+async function fetchFirstOk(cands){
+  for(const p of cands){
+    try{
+      const res=await fetch(p,{cache:'no-cache'});
+      if(res.ok){
+        return { data: await res.json(), filename: p.split('/').pop() };
+      }
+    }
+    catch(e){ 
+      // console.warn(`Fetch failed for ${p}:`, e); 
+    }
+  }
+  return { data: null, filename: null };
+}
+
+// ツールチップの内容を整形
+function buildTooltip(props){
+    const safeNum=v=>isFinite(v)?v:'-';
+    const dateKeys = ['Datetime','日時','日付','発生日時','Date'];
+    const deathKeys = ['死者数','死傷者','Death'];
+    const injuryKeys = ['負傷者数','Injury'];
+    const locKeys = ['発生場所','場所','Location','Name'];
+
+    let whenText = '';
+    for(const k of dateKeys){
+      if(props[k]){ whenText=String(props[k]).substring(0,16).trim(); break; }
+    }
+    const death = safeNum(props[deathKeys.find(k=>props[k]!==undefined)]);
+    const injury = safeNum(props[injuryKeys.find(k=>props[k]!==undefined)]);
+    const location = props[locKeys.find(k=>props[k]!==undefined)] || '';
+
+    const datePart = whenText ? `${whenText}` : '日時不明';
+    const casualtyPart = `死:${death} / 傷:${injury}`;
+
+    if (location && location !== '危険区間' && location !== '通学経路') {
+      return `${location} / ${datePart} / ${casualtyPart}`;
+    }
+    return `${datePart} / ${casualtyPart}`;
+}
+
+// 地図の状態更新（UI連携）
+const setSummary = (id, text, warn=false)=>{
+    const el = document.getElementById(id);
+    if(el){
+        el.textContent=`（${text}）`;
+        el.style.color = warn ? '#ff0' : '#fff';
+    }
+};
+
+/* =========================
+   地図の初期化とベース処理
+   ========================= */
+(function boot(){
+  const latLng = [36.56, 139.88]; // 初期中心座標（宇都宮市付近）
+  const zoom = 14;
+
+  // map初期化
+  map = L.map('map', { center: latLng, zoom: zoom, zoomControl: true, minZoom: 10 });
+  
+  // ベースマップ（標準）
+  const tileStandard = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '© <a href="http://osm.org/copyright">OpenStreetMap</a> contributors'
+  }).addTo(map);
+
+  // ベースマップ（淡色）
+  const tileDark = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '© <a href="http://carto.com/attributions">CartoDB</a> contributors'
+  });
+
+  let isDarkMap = true;
+  document.getElementById('map').classList.add('dark');
+  tileStandard.remove();
+  tileDark.addTo(map);
+
+  // マップスタイル切り替え
+  document.getElementById('mapStyleToggle').addEventListener('click', ()=>{
+      isDarkMap = !isDarkMap;
+      const toggleBtn = document.getElementById('mapStyleToggle');
+      if (isDarkMap) {
+          document.getElementById('map').classList.add('dark');
+          tileStandard.remove();
+          tileDark.addTo(map);
+          toggleBtn.textContent = '淡色MAP';
+      } else {
+          document.getElementById('map').classList.remove('dark');
+          tileDark.remove();
+          tileStandard.addTo(map);
+          toggleBtn.textContent = '通常MAP';
+      }
+  });
+
+  // 初期化完了後、GeoJSONのロードはpcrw:unlockedを待つ
+})();
+
+
+/* =========================
+   メインデータロード（pcrw:unlocked待ち）
+   ========================= */
+document.addEventListener('pcrw:unlocked', async function(){
+  const allBounds = L.latLngBounds();
+  let boundsCount = 0;
+
+  // --- 1. 通学経路 (Routes) ---
+  const routeCandidates = ['data/通学経路_V2.geojson', 'data/routes.geojson'];
+  const { data: routeData, filename: routeFilename } = await fetchFirstOk(routeCandidates);
+  
+  if (routeData) {
+    const routeLayer = L.geoJSON(routeData, {
+      style: { color: '#0070c0', weight: 4, opacity: 0.7 },
+      onEachFeature: (f, lyr)=>{
+        const tip = f.properties.name || f.properties.Name || '通学経路';
+        lyr.bindTooltip(tip, { sticky:true, direction:'top' });
+        if (lyr.getBounds) { allBounds.extend(lyr.getBounds()); boundsCount++; }
+      }
+    }).addTo(map);
+    const routeToggle = document.getElementById('chk-routes');
+    if (routeToggle) routeToggle.addEventListener('change',()=> routeToggle.checked ? routeLayer.addTo(map) : routeLayer.remove());
+    setSummary('route-summary', `${routeFilename} 読込成功`);
+  } else {
+    setSummary('route-summary', 'GeoJSON未配置', true);
+    if (document.getElementById('chk-routes')) document.getElementById('chk-routes').disabled = true;
+  }
+
+  // --- 2. 危険区間 (Hazards) ---
+  const hazardCandidates = ['data/危険区間_V2.geojson', 'data/hazards.geojson'];
+  const { data: hazardData, filename: hazardFilename } = await fetchFirstOk(hazardCandidates);
+
+  if (hazardData) {
+    const hazardLayer = L.geoJSON(hazardData, {
+      style: { color: '#c00', weight: 6, opacity: 0.5 },
+      onEachFeature: (f, lyr)=>{
+        const tip = f.properties.name || f.properties.Name || '危険区間';
+        lyr.bindTooltip(tip, { sticky:true, direction:'top' });
+        if (lyr.getBounds) { allBounds.extend(lyr.getBounds()); boundsCount++; }
+      }
+    }).addTo(map);
+    const hazardToggle = document.getElementById('chk-hazards');
+    if (hazardToggle) hazardToggle.addEventListener('change',()=> hazardToggle.checked ? hazardLayer.addTo(map) : hazardLayer.remove());
+    setSummary('hazard-summary', `${hazardFilename} 読込成功`);
+  } else {
+    setSummary('hazard-summary', 'GeoJSON未配置', true);
+    if (document.getElementById('chk-hazards')) document.getElementById('chk-hazards').disabled = true;
+  }
+  
+  // --- 3. 事故点 (Accidents) ---
+  const accCandidates = [
+    'data/交通事故(2019-2024).geojson', 
+    'data/事故箇所.geojson', 
+    'data/交通事故点.geojson', 
+    'data/accident_points.geojson'
+  ];
+  const { data: accData, filename: accFilename } = await fetchFirstOk(accCandidates);
+  const accToggleChk = document.getElementById('chk-accidents');
+  let accidentsLayer = L.layerGroup();
+  let accCount = 0;
+
+  if (accData) {
+    const ACC_STYLE={ radius:5, color:'#c00', fillColor:'#f55', fillOpacity:.9, weight:1.25, interactive:true };
+    
+    (accData.features || []).forEach(f=>{
+        if(!f.geometry || f.geometry.type!=='Point') return;
+        const [lon,lat] = f.geometry.coordinates || [];
+
+        // 座標の妥当性チェック
+        if(!isFinite(lat) || !isFinite(lon) || lat < 20 || lat > 46 || lon < 122 || lon > 154) { return; }
+        
+        const p = f.properties || {};
+        const tip = buildTooltip(p);
+        
+        L.circleMarker([lat,lon], ACC_STYLE)
+          .bindTooltip(tip || '事故点',{sticky:true,direction:'top'})
+          .addTo(accidentsLayer);
+        
+        allBounds.extend([lat,lon]);
+        boundsCount++;
+        accCount++;
+    });
+
+    if (accCount > 0) {
+        // 初期表示はON (トグルに合わせる)
+        accidentsLayer.addTo(map);
+        if(accToggleChk) accToggleChk.disabled = false;
+        
+        // トグルボタンとの連携
+        if(accToggleChk) {
+          accToggleChk.checked = true; // デフォルトでON
+          accToggleChk.addEventListener('change',()=>{ 
+            accToggleChk.checked ? accidentsLayer.addTo(map) : accidentsLayer.removeLayer(accidentsLayer); 
+          });
+        }
+        setSummary('acc-summary', `${accFilename} / 件数: ${accCount}`);
+
+    } else {
+        if(accToggleChk) accToggleChk.disabled = true;
+        setSummary('acc-summary', `${accFilename} / データなし`, true);
+    }
+
+  } else {
+      if(accToggleChk) accToggleChk.disabled = true;
+      setSummary('acc-summary', 'GeoJSON未配置', true);
+  }
+
+  // --- 4. fitBounds実行 ---
+  if(boundsCount > 0 && allBounds.isValid()){ 
+      map.fitBounds(allBounds.pad(0.05)); 
+  } else {
+      console.warn('全レイヤーの座標が有効範囲にないため、fitBoundsはスキップされました。');
+  }
+});
+
+
+/* =========================
+   パスコード風ゲート（V10.114同仕様）
+   ========================= */
+(function() {
+  const SECRET = 'PCRW2025', KEY = 'pcrw_gate_unlocked';
+  const gate = document.getElementById('pwGate'), input = document.getElementById('pwInput'),
+        btn = document.getElementById('pwBtn'), err = document.getElementById('pwErr'), remember = document.getElementById('pwRemember');
+
+  try{
+    const qs=new URLSearchParams(location.search);
+    if(qs.get('unlock')==='1'||location.hash==='#unlock'){ localStorage.setItem(KEY,'1'); }
+  }catch(_){}
+  try{ if(localStorage.getItem(KEY)==='1'){ unlock(); } }catch(_){}
+
+  function unlock(){
+    document.body.classList.remove('locked');
+    if(gate) gate.style.display='none';
+    document.dispatchEvent(new CustomEvent('pcrw:unlocked')); // ★ここで地図ロードのトリガーを発火
+  }
+  function fail(msg){ err.textContent=msg||'アクセスコードが違います。'; }
+  function tryUnlock(){
+    const v=(input?.value||'').trim();
+    if(!v){ fail('入力してください。'); return; }
+    if(v===SECRET){
+      if(remember?.checked){ try{ localStorage.setItem(KEY,'1'); }catch(_){ } }
+      unlock();
+    } else { fail(); }
+  }
+  btn?.addEventListener('click', tryUnlock);
+  input?.addEventListener('keydown', e=>{ if(e.key==='Enter') tryUnlock(); });
+})();
+</script>
+</body>
+</html>
