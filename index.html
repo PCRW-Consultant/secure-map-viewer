@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="robots" content="noindex,nofollow">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Secure web page - 通学経路・危険区間ビューアーPCRW ver12.2Base</title>
+  <title>Secure web page - 通学経路・危険区間ビューアーPCRW ver12.2E (GeoJSON対応)</title>
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
@@ -107,9 +107,9 @@
         </div>
 
         <label id="acc-toggle-host" style="display:inline-flex;align-items:center;gap:6px;margin-left:10px;user-select:none;cursor:pointer;">
-          <input id="chk-accidents" type="checkbox" disabled>
-          <span style="color:#c00;font-weight:700;">事故点（GeoJSON予定）</span>
-          <span id="acc-summary" style="margin-left:6px;color:#fff;font-weight:600;opacity:.9;">未実装</span>
+          <input id="chk-accidents" type="checkbox" checked>
+          <span style="color:#c00;font-weight:700;">事故点表示</span>
+          <span id="acc-summary" style="margin-left:6px;color:#fff;font-weight:600;opacity:.9;">読込中…</span>
         </label>
 
         <span class="status" id="status">準備中…</span>
@@ -145,14 +145,40 @@
 
 <script>
 /* =========================
-   地図初期化（V10.114同仕様）
+   設定・共通関数
+   ========================= */
+const DEFAULT_CONFIG = {
+  route:  { color:"#0066ff", weight:3, opacity:0.95 },
+  marker: {
+    origin:{ radius:5, color:"#06a10e" },
+    via:{    radius:4, color:"#00c8ff" },
+    dest:{   radius:6, color:"#FFC107" }
+  },
+  uiLabels: {
+    "作新学院":"作新学院高等学校", "宇短附高":"宇都宮短期大学附属高等学校", "文星芸大":"文星芸大学附属高等学校",
+    "文星女子":"宇都文星女子高等学校", "中央高校":"宇都宮中央高等学校", "宇女高校":"宇都宮女子高等学校"
+  }
+};
+const shortToFull = DEFAULT_CONFIG.uiLabels;
+const fullToShort = {}; Object.entries(shortToFull).forEach(([s,f])=>fullToShort[f]=s);
+
+const HZ_COLOR="#DC143C", HZ_OPACITY=0.20, HZ_BASE_WEIGHT=12, MIN_RADIUS=0.5, MIN_WEIGHT=0.5;
+const LINE_SHRINK_ROUTE=0.5, LINE_SHRINK_HAZ=0.5;
+
+function toNum(v){ const n=Number(v); return Number.isFinite(n)?n:NaN; }
+function validLL(lat, lon){ return (Number.isFinite(lat)&&Number.isFinite(lon)&&Math.abs(lat)<=90&&Math.abs(lon)<=180&&!(Math.abs(lat)<1e-6&&Math.abs(lon)<1e-6)); }
+function circle(lat, lon, color, radius, options={}){ const m=L.circleMarker([lat,lon],{radius,color,weight:2,fillColor:color,fillOpacity:.9,...options}); m._baseR=radius; return m; }
+function scaleFor(z){ if(z>=16)return 1.10; if(z>=15)return 1.00; if(z>=14)return 0.80; if(z>=13)return 0.65; if(z>=12)return 0.50; if(z>=11)return 0.35; if(z>=10)return 0.25; if(z>=9)return 0.18; return 0.10; }
+
+/* =========================
+   地図初期化
    ========================= */
 const map = L.map('map');
 const baseNormal = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
   { maxZoom:19, attribution:'&copy; OpenStreetMap' });
 const basePale = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
   { maxZoom:20, attribution:'&copy; OpenStreetMap & CARTO' });
-basePale.addTo(map); // デフォルト淡色
+basePale.addTo(map);
 map.setView([36.56,139.88],12);
 document.getElementById('basemap_pale').checked = true;
 document.querySelectorAll('input[name="basemap"]').forEach(r=>{
@@ -169,59 +195,31 @@ document.querySelectorAll('input[name="basemap"]').forEach(r=>{
 });
 
 /* =========================
-   ここに通学経路・危険区間読込アルゴリズムを挿入予定 (V10.114から移植)
+   レイヤ保持とズーム連動
    ========================= */
+let ROUTES_GEO=null, HAZARDS_GEO=null;
+const routeGroupsBySchool=new Map(), routeMarkerGroupsBySchool=new Map(), hazardGroupsBySchool=new Map();
+const allRoutePolylines=[], allHazardPolylines=[];
 
-/* --- 1. 設定・共通関数 --- */
-const DEFAULT_CONFIG = {
-  route:  { color:"#0066ff", weight:3, opacity:0.95 },
-  marker: {
-    origin:{ radius:5, color:"#06a10e" },
-    via:{    radius:4, color:"#00c8ff" },
-    dest:{   radius:6, color:"#FFC107" }
-  },
-  // UIラベルの短縮名定義
-  uiLabels: {
-    "作新学院":"作新学院高等学校", "宇短附高":"宇都宮短期大学附属高等学校", "文星芸大":"文星芸大学附属高等学校",
-    "文星女子":"宇都文星女子高等学校", "中央高校":"宇都宮中央高等学校", "宇女高校":"宇都宮女子高等学校"
-  }
-};
-// 短縮名と正式名称の相互辞書を生成
-const shortToFull = DEFAULT_CONFIG.uiLabels;
-const fullToShort = {}; Object.entries(shortToFull).forEach(([s,f])=>fullToShort[f]=s);
-
-// 危険区間(Hazard)の定数
-const HZ_COLOR="#DC143C", HZ_OPACITY=0.20, HZ_BASE_WEIGHT=12, MIN_RADIUS=0.5, MIN_WEIGHT=0.5;
-const LINE_SHRINK_ROUTE=0.5, LINE_SHRINK_HAZ=0.5;
-
-// 数値変換と座標検証のユーティリティ
-function toNum(v){ const n=Number(v); return Number.isFinite(n)?n:NaN; }
-function validLL(lat, lon){ return (Number.isFinite(lat)&&Number.isFinite(lon)&&Math.abs(lat)<=90&&Math.abs(lon)<=180&&!(Math.abs(lat)<1e-6&&Math.abs(lon)<1e-6)); }
-function circle(lat, lon, color, radius, options={}){ const m=L.circleMarker([lat,lon],{radius,color,weight:2,fillColor:color,fillOpacity:.9,...options}); m._baseR=radius; return m; }
-// ズームレベルに応じたマーカー/ラインのサイズ調整係数を返す
-function scaleFor(z){ if(z>=16)return 1.10; if(z>=15)return 1.00; if(z>=14)return 0.80; if(z>=13)return 0.65; if(z>=12)return 0.50; if(z>=11)return 0.35; if(z>=10)return 0.25; if(z>=9)return 0.18; return 0.10; }
-
-/* --- 2. レイヤ保持とズーム連動 --- */
-let ROUTES_GEO=null, HAZARDS_GEO=null; // 読み込んだ生のGeoJSONデータを保持
-const routeGroupsBySchool=new Map(), routeMarkerGroupsBySchool=new Map(), hazardGroupsBySchool=new Map(); // 学校ごとのLeafletレイヤーグループ
-const allRoutePolylines=[], allHazardPolylines=[]; // ズーム連動のために全Polylineを保持
-
-// ズーム終了時にスタイルを再適用する関数
 function applyZoomStyles(){
-  const z=map.getZoom(), sf=scaleFor(z); // 現在のズームレベルに応じた係数
-  // 通学経路の太さをズームレベルに応じて変更
+  const z=map.getZoom(), sf=scaleFor(z);
   allRoutePolylines.forEach(pl=>{ const bw=pl._baseW||pl.options.weight||DEFAULT_CONFIG.route.weight; pl.setStyle({weight:Math.max(MIN_WEIGHT,+(bw*(sf*LINE_SHRINK_ROUTE)).toFixed(2))}); });
-  // 危険区間の太さをズームレベルに応じて変更
   allHazardPolylines.forEach(pl=>{ const bw=HZ_BASE_WEIGHT; pl.setStyle({weight:Math.max(MIN_WEIGHT,+(bw*(sf*LINE_SHRINK_HAZ)).toFixed(2))}); });
-  // マーカーの半径をズームレベルに応じて変更
   routeMarkerGroupsBySchool.forEach(grp=>{ grp.eachLayer(layer=>{ if(layer instanceof L.CircleMarker){ const base=layer._baseR||layer.options.radius||5; layer.setStyle({radius:Math.max(MIN_RADIUS,+(base*sf).toFixed(2))}); } }); });
 }
-map.on('zoomend', applyZoomStyles); // ズーム終了イベントにフック
+map.on('zoomend', applyZoomStyles);
 
-/* --- 3. 右側：学校別パネル制御 --- */
-function uiLabelFor(s){ return fullToShort[s] || s; } // 正式名称を短縮名に変換
+/* =========================
+   右側：学校別パネル制御
+   ========================= */
+function uiLabelFor(s){ return fullToShort[s] || s; }
 
-// 通学経路パネルの構築とチェックボックスのイベント設定
+// ボタンの全ON/OFFロジック
+document.getElementById('btnRouteAllOn').addEventListener('click', ()=>toggleAllRoutes(true));
+document.getElementById('btnRouteAllOff').addEventListener('click', ()=>toggleAllRoutes(false));
+document.getElementById('btnHazAllOn').addEventListener('click', ()=>toggleAllHazards(true));
+document.getElementById('btnHazAllOff').addEventListener('click', ()=>toggleAllHazards(false));
+
 function buildRoutePanel(counts){
   const host=document.getElementById('schoolsRoutePanel'); host.innerHTML='';
   const frag=document.createDocumentFragment();
@@ -229,7 +227,6 @@ function buildRoutePanel(counts){
   for(const school of schools){
     const label=document.createElement('label'); label.className='group';
     const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=true; cb.dataset.school=school;
-    // チェックボックス変更時にレイヤーの表示/非表示を切り替え
     cb.addEventListener('change',e=>showRouteSchool(school,e.currentTarget.checked));
     label.appendChild(cb); label.appendChild(document.createTextNode(uiLabelFor(school)+' '));
     const small=document.createElement('span'); small.className='small'; small.textContent=`(${counts.get(school)||0})`;
@@ -237,15 +234,19 @@ function buildRoutePanel(counts){
   }
   host.appendChild(frag);
 }
-// 通学経路レイヤーの表示/非表示を切り替え
 function showRouteSchool(school,on){
   const rg=routeGroupsBySchool.get(school);
   const mg=routeMarkerGroupsBySchool.get(school);
   if(rg){ on?rg.addTo(map):map.removeLayer(rg);}
   if(mg){ on?mg.addTo(map):map.removeLayer(mg);}
 }
+function toggleAllRoutes(on){
+  document.querySelectorAll('#schoolsRoutePanel input[type="checkbox"]').forEach(cb=>{
+    cb.checked = on;
+    showRouteSchool(cb.dataset.school, on);
+  });
+}
 
-// 危険区間パネルの構築とチェックボックスのイベント設定
 function buildHazardPanel(counts){
   const host=document.getElementById('schoolsHazPanel'); host.innerHTML='';
   const frag=document.createDocumentFragment();
@@ -253,7 +254,6 @@ function buildHazardPanel(counts){
   for(const school of schools){
     const label=document.createElement('label'); label.className='group';
     const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=true; cb.dataset.school=school;
-    // チェックボックス変更時にレイヤーの表示/非表示を切り替え
     cb.addEventListener('change',e=>showHazardSchool(school,e.currentTarget.checked));
     label.appendChild(cb); label.appendChild(document.createTextNode(uiLabelFor(school)+' '));
     const small=document.createElement('span'); small.className='small'; small.textContent=`(${counts.get(school)||0})`;
@@ -261,26 +261,10 @@ function buildHazardPanel(counts){
   }
   host.appendChild(frag);
 }
-// 危険区間レイヤーの表示/非表示を切り替え
 function showHazardSchool(school,on){
   const hg=hazardGroupsBySchool.get(school);
   if(hg){ on?hg.addTo(map):map.removeLayer(hg); }
 }
-
-// 全てON/OFFボタンの動作ロジック（V12.2Cで追加）
-document.getElementById('btnRouteAllOn').addEventListener('click', ()=>toggleAllRoutes(true));
-document.getElementById('btnRouteAllOff').addEventListener('click', ()=>toggleAllRoutes(false));
-document.getElementById('btnHazAllOn').addEventListener('click', ()=>toggleAllHazards(true));
-document.getElementById('btnHazAllOff').addEventListener('click', ()=>toggleAllHazards(false));
-
-// 全ての通学経路レイヤーの表示/非表示を一括切り替え
-function toggleAllRoutes(on){
-  document.querySelectorAll('#schoolsRoutePanel input[type="checkbox"]').forEach(cb=>{
-    cb.checked = on;
-    showRouteSchool(cb.dataset.school, on);
-  });
-}
-// 全ての危険区間レイヤーの表示/非表示を一括切り替え
 function toggleAllHazards(on){
   document.querySelectorAll('#schoolsHazPanel input[type="checkbox"]').forEach(cb=>{
     cb.checked = on;
@@ -288,67 +272,121 @@ function toggleAllHazards(on){
   });
 }
 
-/* --- 4. 描画（ルート／危険区間） --- */
-// 危険区間レイヤーをすべてクリア
-function clearHazards(){ hazardGroupsBySchool.forEach(grp=>map.removeLayer(grp)); hazardGroupsBySchool.clear(); allHazardPolylines.length=0; }
-// GeoJSONから危険区間を描画
-function drawHazards(fc){
+/* =========================
+   描画（ルート／危険区間）
+   ========================= */
+// 危険区間
+const clearHazards=()=>{ hazardGroupsBySchool.forEach(grp=>map.removeLayer(grp)); hazardGroupsBySchool.clear(); allHazardPolylines.length=0; }
+
+const drawHazards=(fc, opts={})=>{ // ★ opts追加
   clearHazards(); if(!fc?.features) return;
   const counts=new Map(); const bounds=L.latLngBounds(); const sf=scaleFor(map.getZoom());
-  const addLine=(grp,coords)=>{
-    const latlngs=coords.map(([lon,lat])=>[lat,lon]); // [lon, lat]を[lat, lon]に変換
+
+  // addLine関数をローカル定義（ツールチップ対応）
+  const addLine=(grp,coords, feat)=>{
+    const latlngs=coords.map(([lon,lat])=>[lat,lon]);
     const pl=L.polyline(latlngs,{color:HZ_COLOR,opacity:HZ_OPACITY,weight:Math.max(MIN_WEIGHT,+(HZ_BASE_WEIGHT*(sf*LINE_SHRINK_HAZ)).toFixed(2))});
-    pl.addTo(grp); allHazardPolylines.push(pl); latlngs.forEach(ll=>bounds.extend(ll));
+    pl.addTo(grp);
+    allHazardPolylines.push(pl);
+    latlngs.forEach(ll=>bounds.extend(ll));
+
+    // --- ツールチップ追加ロジック (V12.2D相当) ---
+    if(opts.withTooltip){
+      const props = feat.properties || {};
+      const schoolName = props.school || '学校名なし';
+      const score = props.score || '-';
+      const type = props.type || '不明';
+
+      const tooltipContent = `
+        <div style="font-size:12px;line-height:1.4;">
+          <strong>危険区間</strong>
+          <hr style="margin:2px 0;border-color:#ccc;">
+          学校: ${uiLabelFor(schoolName)}<br>
+          スコア: ${score}<br>
+          種別: ${type}
+        </div>`;
+
+      pl.bindTooltip(tooltipContent, { sticky: true, direction: 'top', className: 'hazard-tooltip' });
+    }
+    // ---------------------------------------------
   };
+
   fc.features.forEach(feat=>{
     const g=feat.geometry; if(!g|| (g.type!=='LineString'&&g.type!=='MultiLineString')) return;
     const school=(feat.properties?.school||'（学校名なし）')+'';
     let grp=hazardGroupsBySchool.get(school); if(!grp){ grp=L.featureGroup(); hazardGroupsBySchool.set(school,grp); }
-    if(g.type==='LineString'){ if(g.coordinates?.length>=2){ addLine(grp,g.coordinates); counts.set(school,(counts.get(school)||0)+1); } }
-    else { (g.coordinates||[]).forEach(line=>{ if(line?.length>=2){ addLine(grp,line); counts.set(school,(counts.get(school)||0)+1); } }); }
+    if(g.type==='LineString'){ if(g.coordinates?.length>=2){ addLine(grp,g.coordinates, feat); counts.set(school,(counts.get(school)||0)+1); } }
+    else { (g.coordinates||[]).forEach(line=>{ if(line?.length>=2){ addLine(grp,line, feat); counts.set(school,(counts.get(school)||0)+1); } }); }
   });
   hazardGroupsBySchool.forEach(grp=>grp.addTo(map)); return {bounds,counts};
 }
 
-// 通学経路レイヤーをすべてクリア
-function clearRoutes(){ routeGroupsBySchool.forEach(grp=>map.removeLayer(grp)); routeMarkerGroupsBySchool.forEach(grp=>map.removeLayer(grp));
+// 通学経路
+const clearRoutes=()=>{ routeGroupsBySchool.forEach(grp=>map.removeLayer(grp)); routeMarkerGroupsBySchool.forEach(grp=>map.removeLayer(grp));
   routeGroupsBySchool.clear(); routeMarkerGroupsBySchool.clear(); allRoutePolylines.length=0; }
-// GeoJSONから通学経路を描画
-function drawRoutes(fc){
+
+const drawRoutes=(fc, opts={})=>{ // ★ opts追加
   clearRoutes(); if(!fc?.features) return;
   const counts=new Map(); const bounds=L.latLngBounds(); const sf=scaleFor(map.getZoom());
+
+  // addLineAndMarkers関数をローカル定義（ツールチップ対応）
+  const addLineAndMarkers=(coords, feat)=>{
+    const latlngs=coords.map(([lon,lat])=>[lat,lon]);
+    const pl=L.polyline(latlngs,{color:DEFAULT_CONFIG.route.color,opacity:DEFAULT_CONFIG.route.opacity,
+      weight:Math.max(MIN_WEIGHT,+(DEFAULT_CONFIG.route.weight*(sf*LINE_SHRINK_ROUTE)).toFixed(2))}).addTo(grpLine);
+    pl._baseW=DEFAULT_CONFIG.route.weight; allRoutePolylines.push(pl); latlngs.forEach(ll=>bounds.extend(ll));
+
+    // --- 経路線 ツールチップ追加ロジック (V12.2D相当) ---
+    if(opts.withTooltip){
+      const props = feat.properties || {};
+      const routeID = props.id || props.ROUTE_ID || '-';
+      const schoolName = props.school || '学校名なし';
+      const tooltipContent = `
+        <div style="font-size:12px;line-height:1.4;">
+          <strong>通学経路</strong>
+          <hr style="margin:2px 0;border-color:#ccc;">
+          学校: ${uiLabelFor(schoolName)}<br>
+          経路ID: ${routeID}
+        </div>`;
+      pl.bindTooltip(tooltipContent, { sticky: true, direction: 'top', className: 'route-tooltip' });
+    }
+    // ---------------------------------------------------
+
+    let o=props?.origin, v=props?.via_points||props?.via, d=props?.dest||props?.destination;
+    if(!o && latlngs.length>0) o={lat:latlngs[0][0], lon:latlngs[0][1]};
+    if(!d && latlngs.length>0) d={lat:latlngs.at(-1)[0], lon:latlngs.at(-1)[1]};
+
+    // マーカー描画とツールチップ追加
+    if(Array.isArray(v)){ v.forEach((vp,i)=>{ const vLat=toNum(vp?.lat), vLon=toNum(vp?.lon); if(validLL(vLat,vLon)){
+      circle(vLat,vLon,DEFAULT_CONFIG.marker.via.color,DEFAULT_CONFIG.marker.via.radius,{fillOpacity:.25}).addTo(grpMark);
+    }});}
+    if(o&&validLL(toNum(o.lat),toNum(o.lon))){
+      const marker = circle(toNum(o.lat),toNum(o.lon),DEFAULT_CONFIG.marker.origin.color,DEFAULT_CONFIG.marker.origin.radius).addTo(grpMark);
+      if(opts.withTooltip) marker.bindTooltip(`起点<br>(${uiLabelFor(schoolName)})`, { permanent:false, direction:'right', sticky:true });
+    }
+    if(d&&validLL(toNum(d.lat),toNum(d.lon))){
+      const baseFontSize=40;
+      const destIcon=L.divIcon({html:`<span style="color:${DEFAULT_CONFIG.marker.dest.color};font-size:${baseFontSize}px;line-height:1;">★</span>`, className:'', iconSize:[40,40], iconAnchor:[20,34]});
+      const m=L.marker([toNum(d.lat),toNum(d.lon)],{icon:destIcon,zIndexOffset:1000}).addTo(grpMark); m._baseFontSize=baseFontSize;
+      if(opts.withTooltip) m.bindTooltip(`終点: ${schoolName}`, { permanent:true, direction:'top', sticky:true, offset:L.point(0,-30) });
+    }
+  };
+
   fc.features.forEach(feat=>{
     const g=feat.geometry; if(!g|| (g.type!=='LineString'&&g.type!=='MultiLineString')) return;
     const props=feat.properties||{}; const school=(props.school||'（学校名なし）')+'';
     let grpLine=routeGroupsBySchool.get(school); if(!grpLine){ grpLine=L.featureGroup(); routeGroupsBySchool.set(school,grpLine); }
     let grpMark=routeMarkerGroupsBySchool.get(school); if(!grpMark){ grpMark=L.featureGroup(); routeMarkerGroupsBySchool.set(school,grpMark); }
-    const addLineAndMarkers=(coords)=>{
-      const latlngs=coords.map(([lon,lat])=>[lat,lon]); // [lon, lat]を[lat, lon]に変換
-      const pl=L.polyline(latlngs,{color:DEFAULT_CONFIG.route.color,opacity:DEFAULT_CONFIG.route.opacity,
-        weight:Math.max(MIN_WEIGHT,+(DEFAULT_CONFIG.route.weight*(sf*LINE_SHRINK_ROUTE)).toFixed(2))}).addTo(grpLine);
-      pl._baseW=DEFAULT_CONFIG.route.weight; allRoutePolylines.push(pl); latlngs.forEach(ll=>bounds.extend(ll));
-      let o=props?.origin, v=props?.via_points||props?.via, d=props?.dest||props?.destination;
-      // 始点・終点の座標をPropertiesまたはLineStringの最初/最後から取得し、マーカーを描画
-      if(!o && latlngs.length>0) o={lat:latlngs[0][0], lon:latlngs[0][1]};
-      if(!d && latlngs.length>0) d={lat:latlngs.at(-1)[0], lon:latlngs.at(-1)[1]};
-      if(Array.isArray(v)){ v.forEach((vp,i)=>{ const vLat=toNum(vp?.lat), vLon=toNum(vp?.lon); if(validLL(vLat,vLon)){
-        circle(vLat,vLon,DEFAULT_CONFIG.marker.via.color,DEFAULT_CONFIG.marker.via.radius,{fillOpacity:.25}).addTo(grpMark);
-      }});}
-      if(o&&validLL(toNum(o.lat),toNum(o.lon))){ circle(toNum(o.lat),toNum(o.lon),DEFAULT_CONFIG.marker.origin.color,DEFAULT_CONFIG.marker.origin.radius).addTo(grpMark); }
-      // 終点（学校）は★アイコンで描画
-      if(d&&validLL(toNum(d.lat),toNum(d.lon))){ const baseFontSize=40;
-        const destIcon=L.divIcon({html:`<span style="color:${DEFAULT_CONFIG.marker.dest.color};font-size:${baseFontSize}px;line-height:1;">★</span>`, className:'', iconSize:[40,40], iconAnchor:[20,34]});
-        const m=L.marker([toNum(d.lat),toNum(d.lon)],{icon:destIcon,zIndexOffset:1000}).addTo(grpMark); m._baseFontSize=baseFontSize; }
-    };
-    if(g.type==='LineString'){ if(g.coordinates?.length>=2){ addLineAndMarkers(g.coordinates); counts.set(school,(counts.get(school)||0)+1); } }
-    else { (g.coordinates||[]).forEach(line=>{ if(line?.length>=2){ addLineAndMarkers(line); counts.set(school,(counts.get(school)||0)+1); } }); }
+    if(g.type==='LineString'){ if(g.coordinates?.length>=2){ addLineAndMarkers(g.coordinates, feat); counts.set(school,(counts.get(school)||0)+1); } }
+    else { (g.coordinates||[]).forEach(line=>{ if(line?.length>=2){ addLineAndMarkers(line, feat); counts.set(school,(counts.get(school)||0)+1); } }); }
   });
   routeGroupsBySchool.forEach(grp=>grp.addTo(map)); routeMarkerGroupsBySchool.forEach(grp=>grp.addTo(map));
   return {bounds,counts};
 }
 
-/* --- 5. ステータス/範囲調整ヘルパー --- */
-// 読み込んだデータがFeatureCollection形式であることを保証
+/* =========================
+   ステータス/範囲調整ヘルパー
+   ========================= */
 function normalizeToFC(obj){
   if(!obj) return {type:'FeatureCollection',features:[]};
   if(obj.type==='FeatureCollection'&&Array.isArray(obj.features)) return obj;
@@ -356,61 +394,159 @@ function normalizeToFC(obj){
   if(Array.isArray(obj)) return {type:'FeatureCollection',features:obj};
   return {type:'FeatureCollection',features:[]};
 }
-// 左下のステータス表示を更新
-function updateStatus(){ const hz=HAZARDS_GEO?.features?.length||0; const rt=ROUTES_GEO?.features?.length||0; document.getElementById('status').textContent=`危険:${hz} / ルート:${rt}`; }
-// 複数のBounds（表示範囲）を結合し、地図をそれにフィットさせる
-function fitAllBounds(boundsList){ const mix=L.latLngBounds(); boundsList.forEach(b=>{ if(b?.isValid()) mix.extend(b); }); if(mix.isValid()) map.fitBounds(mix,{padding:[20,20]}); }
+function updateStatus(accidentCount=null){
+  const hz=HAZARDS_GEO?.features?.length||0;
+  const rt=ROUTES_GEO?.features?.length||0;
+  let text = `危険:${hz} / ルート:${rt}`;
+  if(accidentCount !== null) { text += ` / 事故:${accidentCount}`; }
+  document.getElementById('status').textContent = text;
+}
+function fitAllBounds(boundsList){
+  const mix=L.latLngBounds();
+  boundsList.forEach(b=>{ if(b?.isValid()) mix.extend(b); });
+  if(mix.isValid()) map.fitBounds(mix,{padding:[20,20]});
+}
 
 /* =========================
-   ここに事故点GeoJSON読込アルゴリズムを挿入予定 (V10.114の自動読込(autoFetch)を移植)
+   外部データ自動読込（メイン処理）
    ========================= */
-
 (async function autoFetch(){
-  // 読み込みを試行するファイル名の候補
+  // 1. 経路/危険区間 GeoJSONのロード
   const routeCandidates  = ['data/通学経路_V2.geojson','data/routes.geojson'];
   const hazardCandidates = ['data/危険区間_V2.geojson','data/hazards.geojson'];
 
-  // 候補リストから最初に読み込みに成功したJSONデータを返す関数
   async function fetchFirstOk(cands){
     for(const p of cands){
       try{
-        const res=await fetch(p,{cache:'no-store'}); // cache:'no-store'で常に新しいファイルを読みに行く
+        const res=await fetch(p,{cache:'no-store'});
         if(res.ok){ return JSON.parse(await res.text()); }
       }
-      catch(_){ /* 失敗しても次の候補を試す */ }
+      catch(_){ }
     }
     return null;
   }
 
   try{
-    // 通学経路と危険区間を並行して読み込み
     const [r,h]=await Promise.all([fetchFirstOk(routeCandidates), fetchFirstOk(hazardCandidates)]);
-
-    // 読み込み結果をグローバル変数に保持
     if(r) ROUTES_GEO=normalizeToFC(r);
     if(h) HAZARDS_GEO=normalizeToFC(h);
 
-    // データの描画と描画範囲（bounds）と件数（counts）の取得
-    const rb=ROUTES_GEO?drawRoutes(ROUTES_GEO):null;
-    const hb=HAZARDS_GEO?drawHazards(HAZARDS_GEO):null;
+    // ★ 描画とツールチップ有効化フラグを渡す
+    const rb=ROUTES_GEO?drawRoutes(ROUTES_GEO, {withTooltip:true}):null;
+    const hb=HAZARDS_GEO?drawHazards(HAZARDS_GEO, {withTooltip:true}):null;
 
-    // 右側パネルの構築
     if(rb?.counts) buildRoutePanel(rb.counts);
     if(hb?.counts) buildHazardPanel(hb.counts);
 
-    // 全ての描画範囲を考慮して地図の表示範囲を調整
-    fitAllBounds([rb?.bounds, hb?.bounds]);
-    // ズーム連動のために描画後にもう一度スタイルを適用
+    // 2. 事故点 GeoJSONのロード (Step C/D)
+    const ab = await loadAccidentGeoJSON();
+    
+    // 3. 全ての描画範囲を考慮して地図の表示範囲を調整
+    fitAllBounds([rb?.bounds, hb?.bounds, ab?.bounds]);
     applyZoomStyles();
-    // ステータスを更新
-    updateStatus();
+    updateStatus(ab?.count); // 事故点件数も更新
   }catch(e){ console.error('Auto-fetch error', e); }
 })();
 
 /* =========================
-   パスコード風ゲート（V10.114同仕様）
+   事故GeoJSON 自動読込 (V12.2E/Step C/D)
    ========================= */
-(function(){
+// 事故点を専用paneに（重なり優先度UP）
+if(!map.getPane('accidents')){ map.createPane('accidents'); map.getPane('accidents').style.zIndex=650; }
+const ACC_STYLE={ radius:5, color:'#c00', fillColor:'#f55', fillOpacity:.9, weight:1.25, pane:'accidents', interactive:true };
+const accidentsLayer=L.layerGroup();
+let accidentBounds = L.latLngBounds();
+
+const GEOJSON_CANDIDATES=[
+  'data/交通事故(2019-2024).geojson',
+  'data/事故箇所.geojson',
+  'data/交通事故点.geojson',
+  'data/accident_points.geojson'
+];
+
+async function loadAccidentGeoJSON(){
+  let data=null, pickedFilename=null;
+  for(const n of GEOJSON_CANDIDATES){
+    try{
+      const r = await fetch(n, { cache:'no-cache' });
+      if(r.ok){ data = await r.json(); pickedFilename=n.split('/').pop(); break; }
+    } catch(e){
+      console.warn(`Attempt to fetch ${n} failed:`, e);
+    }
+  }
+  if(!data){ setSummary('GeoJSON未配置', true); console.info('no accident geojson found'); return {bounds:null, count:0}; }
+
+  let count=0;
+  const features = data.features || [];
+
+  features.forEach(f=>{
+    if(!f || f.type!=='Feature' || !f.geometry || f.geometry.type!=='Point') return;
+
+    // GeoJSONの座標順 [lon, lat] を Leafletの [lat, lon] に変換
+    const [lon,lat] = f.geometry.coordinates||[];
+    if(!validLL(lat, lon)) return;
+
+    // L.circleMarker で描画
+    const marker = L.circleMarker([lat,lon], ACC_STYLE);
+
+    // --- Step D: ツールチップ（簡易表示） ---
+    const props = f.properties || {};
+    const tooltipText = buildTooltip(props);
+    marker.bindTooltip(tooltipText, { sticky:true, direction:'top' });
+
+    marker.addTo(accidentsLayer);
+    accidentBounds.extend([lat,lon]);
+    count++;
+  });
+
+  if(count > 0){
+    accidentsLayer.addTo(map);
+    document.getElementById('chk-accidents').disabled = false;
+  } else {
+    document.getElementById('chk-accidents').disabled = true;
+  }
+  setSummary(`読込: ${pickedFilename} / 件数: ${count}`, false);
+
+  // トグルボタンとの連携
+  const chk=document.getElementById('chk-accidents');
+  chk.addEventListener('change',()=>{ chk.checked ? accidentsLayer.addTo(map) : accidentsLayer.removeLayer(accidentsLayer); });
+
+  return {bounds:accidentBounds, count};
+}
+
+function setSummary(text, warn=false){
+  const el=document.getElementById('acc-summary');
+  el.textContent=`（${text}）`;
+  el.style.color = warn ? '#ff0' : '#fff';
+}
+
+function buildTooltip(props){
+  const safeNum=v=>isFinite(v)?v:'-';
+  const dateKeys = ['DateTime','日時','日付','発生日時','Date'];
+  const deathKeys = ['死者数','死傷者','Death'];
+  const injuryKeys = ['負傷者数','Injury'];
+
+  let whenText = '';
+  for(const k of dateKeys){
+    if(props[k]){ whenText=String(props[k]).substring(0,16).trim(); break; }
+  }
+
+  const death = safeNum(props[deathKeys.find(k=>props[k]!==undefined)]);
+  const injury = safeNum(props[injuryKeys.find(k=>props[k]!==undefined)]);
+
+  const datePart = whenText ? `${whenText}` : '日時不明';
+  const casualtyPart = `死:${death} / 傷:${injury}`;
+
+  const location = props['発生場所'] || props['場所'] || '';
+  if(location) return `${datePart} ${casualtyPart} / ${location}`;
+
+  return `${datePart} / ${casualtyPart}`;
+}
+
+/* =========================
+   パスコード風ゲート
+   ========================= */
+document.addEventListener('DOMContentLoaded', ()=>{
   const SECRET='PCRW2025', KEY='pcrw_gate_unlocked';
   const gate=document.getElementById('pwGate'), input=document.getElementById('pwInput'),
         btn=document.getElementById('pwBtn'), err=document.getElementById('pwErr'), remember=document.getElementById('pwRemember');
@@ -421,11 +557,9 @@ function fitAllBounds(boundsList){ const mix=L.latLngBounds(); boundsList.forEac
   }catch(_){}
   try{ if(localStorage.getItem(KEY)==='1'){ unlock(); } }catch(_){}
 
-  // ロック解除（地図描画許可）
   function unlock(){
     document.body.classList.remove('locked');
     if(gate) gate.style.display='none';
-    // ロック解除時にカスタムイベントを発火
     document.dispatchEvent(new CustomEvent('pcrw:unlocked'));
   }
   function fail(msg){ err.textContent=msg||'アクセスコードが違います。'; }
@@ -440,7 +574,7 @@ function fitAllBounds(boundsList){ const mix=L.latLngBounds(); boundsList.forEac
   btn?.addEventListener('click', tryUnlock);
   input?.addEventListener('keydown', e=>{ if(e.key==='Enter') tryUnlock(); });
   setTimeout(()=>{ input?.focus(); }, 0);
-})();
+});
 </script>
 
 </body>
