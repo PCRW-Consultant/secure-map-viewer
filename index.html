@@ -675,5 +675,92 @@ document.addEventListener('DOMContentLoaded', () => {
   setTimeout(()=>{ input?.focus(); }, 0);
 })();
 </script>
+
+
+
+
+
+<script>
+/* =========================
+   Step A: 事故点GeoJSONの最小ロードと描画
+   ========================= */
+(async function(){
+  // 読み込みを試行するGeoJSONファイル名の候補リスト
+  const candidates = [
+    '交通事故(2019-2024).geojson', // DEXのアップロードファイル名
+    '事故箇所.geojson', 
+    '交通事故点.geojson', 
+    'accident_points.geojson'
+  ];
+  let data = null, picked = null;
+  
+  // 候補ファイルを順番に探し、最初に見つかったものを読み込む（fetch）
+  for(const name of candidates){
+    try {
+      // ファイルパスは /data/ から始める。cache:'no-cache'は古いファイルが残るのを防ぐおまじない
+      const r = await fetch(`/data/${name}`, { cache: 'no-cache' });
+      
+      // 読み込み成功（HTTPステータス200 OK）なら
+      if(r.ok){ 
+        data = await r.json(); // JSONデータに変換
+        picked = name; 
+        break; 
+      }
+    } catch(e) {
+      // ネットワークエラーやJSON解析エラーが発生しても、次のファイルを試すため無視
+    }
+  }
+  
+  // ファイルが見つからなかったら、処理を終了
+  if(!data){ console.info('事故点GeoJSONが見つかりません。/data/にファイルがあるか確認してください。'); return; }
+
+  // Leafletのレイヤーグループを作成し、地図に追加
+  const grp = L.layerGroup().addTo(map);
+  let count = 0, bounds = L.latLngBounds();
+  
+  // GeoJSONのフィーチャー（Feature）を1つずつ処理
+  (data.features || []).forEach(f=>{
+    // 点データ(Point)でなければスキップ
+    if(!f.geometry || f.geometry.type!=='Point') return;
+    
+    // 座標 [lon, lat] を取得
+    const [lon,lat] = f.geometry.coordinates || [];
+    if(!isFinite(lat)||!isFinite(lon)) return; // 座標が有効な数値か確認
+    
+    const p = f.properties || {};
+    
+    // ツールチップの内容を簡易作成
+    const date = p.Datetime || p['発生日時'] || '日時不明';
+    const dead = p['死者数'] != null ? `死:${p['死者数']}` : '死:-';
+    const injured = p['負傷者数'] != null ? `傷:${p['負傷者数']}` : '傷:-';
+    const tip = `${date} / ${dead} / ${injured}`;
+    
+    // L.circleMarker (小さな円マーカー) を地図に描画
+    L.circleMarker([lat,lon], {
+      radius:5, 
+      color:'#c00',        // 線の色：赤
+      weight:1.25,        // 線の太さ
+      fillColor:'#f55',     // 塗りつぶしの色：明るい赤
+      fillOpacity:0.9,    // 塗りつぶしの透過度
+      interactive:true    // ツールチップ反応のために必要
+    }).bindTooltip(tip,{sticky:true,direction:'top'}).addTo(grp); // ツールチップを付与し、レイヤーグループに追加
+    
+    bounds.extend([lat,lon]); // 表示範囲（bounds）を更新
+    count++;
+  });
+  
+  // 点が1つでもあれば、その全体が見えるように地図のズームを調整 (fitBounds)
+  if(count>0){ 
+    // pad(0.05) は、表示範囲の周りに5%の余白を持たせるための調整
+    map.fitBounds(bounds.pad(0.05)); 
+  }
+  
+  // 処理結果をコンソールに出力
+  console.info(`事故点 GeoJSON ロード成功: ${picked} / 件数: ${count}`);
+})();
+</script>
+
+
+
 </body>
 </html>
