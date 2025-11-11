@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="robots" content="noindex,nofollow">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Secure web page - 通学経路・危険区間ビューアーPCRW ver212</title>
+  <title>Secure web page - 通学経路・危険区間ビューアーPCRW ver215</title>
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
@@ -16,7 +16,6 @@
     html, body { height: 100%; margin: 0; }
     #app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
     
-    /* V212: エラー原因のフォント指定を削除し、UIをクリーンアップ */
     body { font-family: sans-serif; }
 
     /* パスコード風ゲート */
@@ -30,7 +29,6 @@
     .pwRow { display:flex; gap:10px; margin-top: 10px; }
     .pwInput { flex:1; padding: 10px; border: 1px solid #374151; border-radius: 6px; 
       background: #111827; color: #fff; font-size: 1rem; }
-    /* V212: 安全な色指定に変更 */
     .pwBtn { padding: 10px 18px; background: #3b82f6; color: white; border: none; 
       border-radius: 6px; cursor: pointer; font-size: 1rem; }
     #pwErr { color: #f87171; font-size: 0.9rem; margin-top: 10px; height: 1.2em; }
@@ -46,10 +44,10 @@
     .leaflet-tile-pane { filter: grayscale(0.25); } /* 標準マップをやや淡色化 */
     #map.dark .leaflet-tile-pane { filter: grayscale(0.5) brightness(0.85); } /* 淡色マップ */
 
-    /* 右側サイドパネル (V212: レイアウト修正) */
+    /* 右側サイドパネル */
     #rightPanel { 
       position: absolute; 
-      top: 70px; /* ヘッダーの下に配置 */
+      top: 70px; 
       right: 15px; 
       z-index: 1000; 
       background: rgba(32, 44, 59, 0.9); 
@@ -72,7 +70,7 @@
   <div id="app">
     <header>
       <div class="header-left">
-        <h1 style="font-size:1.2rem; font-weight:700; margin:0;">通学路安全マップ V212</h1>
+        <h1 style="font-size:1.2rem; font-weight:700; margin:0;">通学路安全マップ V215</h1>
         <button id="mapStyleToggle" style="padding: 6px 10px; border: none; border-radius: 4px; background: #525252; color: white; cursor: pointer;">淡色MAP</button>
       </div>
       <div class="header-right">
@@ -120,7 +118,7 @@
   </div>
 
 <script>
-// V212: V12.2Base UI + V111L (Routes/Hazards) + Corrected Accident GeoJSON Logic + Syntax Fix
+// V215: Final File Name Path Resolution (Added user's specific reduced file name).
 
 // Leafletマップのグローバル変数
 let map;
@@ -135,11 +133,20 @@ async function fetchFirstOk(cands){
     try{
       const res=await fetch(p,{cache:'no-cache'});
       if(res.ok){
-        return { data: await res.json(), filename: p.split('/').pop() };
+        const text = await res.text();
+        try {
+            // GeoJSON (JSON) のパースを試みる
+            return { data: JSON.parse(text), filename: p.split('/').pop() };
+        } catch(e) {
+            // GeoJSONファイルの内容がHTMLなど不正な形式の場合の警告
+            // 以前のエラー（'Unexpected token <'）はここで検出されるはず
+            console.error(`[GeoJSON Parse Error] ${p} returned invalid JSON. Check file content.`, e);
+            return { data: null, filename: null }; 
+        }
       }
     }
     catch(e){ 
-      // console.warn(`Fetch failed for ${p}:`, e); 
+      // ネットワークエラーの場合は警告のみで継続
     }
   }
   return { data: null, filename: null };
@@ -155,10 +162,8 @@ function buildTooltip(props){
 
     let whenText = '';
     for(const k of dateKeys){
-      // 最初の16文字までを日付として使用
       if(props[k]){ whenText=String(props[k]).substring(0,16).trim(); break; }
     }
-    // プロパティが存在しない場合は - を表示
     const death = safeNum(props[deathKeys.find(k=>props[k]!==undefined)]);
     const injury = safeNum(props[injuryKeys.find(k=>props[k]!==undefined)]);
     const location = props[locKeys.find(k=>props[k]!==undefined)] || '';
@@ -251,7 +256,7 @@ document.addEventListener('pcrw:unlocked', async function(){
     if (routeToggle) routeToggle.addEventListener('change',()=> routeToggle.checked ? routeLayer.addTo(map) : routeLayer.remove());
     setSummary('route-summary', `${routeFilename} 読込成功`);
   } else {
-    setSummary('route-summary', 'GeoJSON未配置', true);
+    setSummary('route-summary', 'GeoJSON未配置または不正', true);
     if (document.getElementById('chk-routes')) document.getElementById('chk-routes').disabled = true;
   }
 
@@ -272,12 +277,14 @@ document.addEventListener('pcrw:unlocked', async function(){
     if (hazardToggle) hazardToggle.addEventListener('change',()=> hazardToggle.checked ? hazardLayer.addTo(map) : hazardLayer.remove());
     setSummary('hazard-summary', `${hazardFilename} 読込成功`);
   } else {
-    setSummary('hazard-summary', 'GeoJSON未配置', true);
+    setSummary('hazard-summary', 'GeoJSON未配置または不正', true);
     if (document.getElementById('chk-hazards')) document.getElementById('chk-hazards').disabled = true;
   }
   
   // --- 3. 事故点 (Accidents) ---
+  // ★ V215修正: ユーザー提供のファイル名を最優先で追加
   const accCandidates = [
+    'data/交通事故(2019-2024) - VIZ用13179KB→18KB.geojson', 
     'data/交通事故(2019-2024).geojson', 
     'data/事故箇所.geojson', 
     'data/交通事故点.geojson', 
@@ -289,18 +296,19 @@ document.addEventListener('pcrw:unlocked', async function(){
   let accCount = 0;
 
   if (accData) {
-    // 事故点のカスタムpane (重なり優先度UP)
     if(!map.getPane('accidents')){ map.createPane('accidents'); map.getPane('accidents').style.zIndex=650; }
 
     const ACC_STYLE={ radius:5, color:'#c00', fillColor:'#f55', fillOpacity:.9, weight:1.25, interactive:true, pane:'accidents' };
     
     (accData.features || []).forEach(f=>{
         if(!f.geometry || f.geometry.type!=='Point') return;
-        // GeoJSONの座標順 [lon, lat] を Leafletの [lat, lon] に変換
         const [lon,lat] = f.geometry.coordinates || [];
 
-        // 座標の妥当性チェック (日本周辺の緯度/経度範囲)
-        if(!isFinite(lat) || !isFinite(lon) || lat < 20 || lat > 46 || lon < 122 || lon > 154) { return; }
+        // 厳密な座標チェック: GeoJSONの形式は [lon, lat] であり、Leafletは [lat, lon]
+        if(!isFinite(lat) || !isFinite(lon) || lat < 20 || lat > 46 || lon < 122 || lon > 154) { 
+            // console.warn('Invalid coordinate skipped:', lat, lon);
+            return; 
+        }
         
         const p = f.properties || {};
         const tip = buildTooltip(p);
@@ -315,13 +323,11 @@ document.addEventListener('pcrw:unlocked', async function(){
     });
 
     if (accCount > 0) {
-        // 初期表示はON (トグルに合わせる)
         accidentsLayer.addTo(map);
         if(accToggleChk) accToggleChk.disabled = false;
         
-        // トグルボタンとの連携
         if(accToggleChk) {
-          accToggleChk.checked = true; // デフォルトでON
+          accToggleChk.checked = true;
           accToggleChk.addEventListener('change',()=>{ 
             accToggleChk.checked ? accidentsLayer.addTo(map) : accidentsLayer.removeLayer(accidentsLayer); 
           });
@@ -335,7 +341,7 @@ document.addEventListener('pcrw:unlocked', async function(){
 
   } else {
       if(accToggleChk) accToggleChk.disabled = true;
-      setSummary('acc-summary', 'GeoJSON未配置', true);
+      setSummary('acc-summary', 'GeoJSON未配置または不正', true);
   }
 
   // --- 4. fitBounds実行 ---
@@ -364,7 +370,7 @@ document.addEventListener('pcrw:unlocked', async function(){
   function unlock(){
     document.body.classList.remove('locked');
     if(gate) gate.style.display='none';
-    document.dispatchEvent(new CustomEvent('pcrw:unlocked')); // ★地図ロードのトリガー
+    document.dispatchEvent(new CustomEvent('pcrw:unlocked'));
   }
   function fail(msg){ err.textContent=msg||'アクセスコードが違います。'; }
   function tryUnlock(){
